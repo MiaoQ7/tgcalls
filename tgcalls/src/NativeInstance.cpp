@@ -258,8 +258,8 @@ void NativeInstance::startCall(vector<RtcServer> servers,
   std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
 
   tgcalls::MediaDevicesConfig mediaConfig = {
-      .audioInputId = "VB-Cable",
-      //            .audioInputId = "default (Built-in Input)",
+      // .audioInputId = "VB-Cable",
+      .audioInputId = "default (Built-in Input)",
       .audioOutputId = "default (Built-in Output)",
       //            .audioInputId = "0",
       //            .audioOutputId = "0",
@@ -280,12 +280,12 @@ void NativeInstance::startCall(vector<RtcServer> servers,
           .enableAGC = true,
           .enableVolumeControl = true,
           .logPath = {std::move(logPath)},
-          .statsLogPath = {"/Users/marshal/projects/tgcalls/python-binding/"
-                           "pytgcalls/tgcalls-stat.txt"},
+          // .statsLogPath = {"/Users/marshal/projects/tgcalls/python-binding/"
+          //                  "pytgcalls/tgcalls-stat.txt"},
           .maxApiLayer = 92,
           .enableHighBitrateVideo = false,
           .preferredVideoCodecs = std::vector<std::string>(),
-          .protocolVersion = tgcalls::ProtocolVersion::V0
+          // .protocolVersion = tgcalls::ProtocolVersion::V0
           //                .preferredVideoCodecs = {cricket::kVp9CodecName}
       },
       .persistentState = {std::vector<uint8_t>()},
@@ -295,32 +295,32 @@ void NativeInstance::startCall(vector<RtcServer> servers,
       .videoCapture = videoCapture,
       .stateUpdated =
       [=](tgcalls::State state) {
-        //                py::print("stateUpdated");
+                       py::print("stateUpdated");
       },
       .signalBarsUpdated =
       [=](int count) {
-        //                py::print("signalBarsUpdated");
+                       py::print("signalBarsUpdated");
       },
       .audioLevelUpdated =
       [=](float level) {
-        //                py::print("audioLevelUpdated");
+                       py::print("audioLevelUpdated");
       },
       .remoteBatteryLevelIsLowUpdated =
       [=](bool isLow) {
-        //                py::print("remoteBatteryLevelIsLowUpdated");
+                       py::print("remoteBatteryLevelIsLowUpdated");
       },
       .remoteMediaStateUpdated =
       [=](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
-        //                py::print("remoteMediaStateUpdated");
+                       py::print("remoteMediaStateUpdated");
       },
       .remotePrefferedAspectRatioUpdated =
       [=](float ratio) {
-        //                py::print("remotePrefferedAspectRatioUpdated");
+                       py::print("remotePrefferedAspectRatioUpdated");
       },
       .signalingDataEmitted =
       [=](const std::vector<uint8_t> &data) {
-        //                py::print("signalingDataEmitted");
-        signalingDataEmittedCallback(data);
+                       py::print("signalingDataEmitted");
+        // signalingDataEmittedCallback(data);
       },
   };
 
@@ -338,14 +338,8 @@ void NativeInstance::startCall(vector<RtcServer> servers,
       };
       pushStun(host);
       pushStun(hostv6);
-
-      //            descriptor.rtcServers.push_back(rtcServer.toTgcalls(false,
-      //            false));
-      //            descriptor.rtcServers.push_back(rtcServer.toTgcalls(true,
-      //            false));
     }
 
-    //        && !rtcServer.login.empty() && !rtcServer.password.empty()
     const auto username = rtcServer.login;
     const auto password = rtcServer.password;
     if (rtcServer.isTurn) {
@@ -360,9 +354,6 @@ void NativeInstance::startCall(vector<RtcServer> servers,
       };
       pushTurn(host);
       pushTurn(hostv6);
-
-      //            descriptor.rtcServers.push_back(rtcServer.toTgcalls());
-      //            descriptor.rtcServers.push_back(rtcServer.toTgcalls(true));
     }
   }
 
@@ -381,6 +372,6 @@ void NativeInstance::receiveSignalingData(std::vector<uint8_t> &data) const {
 
 void NativeInstance::setSignalingDataEmittedCallback(
     const std::function<void(const std::vector<uint8_t> &data)> &f) {
-  //    py::print("setSignalingDataEmittedCallback");
-  signalingDataEmittedCallback = f;
+     py::print("setSignalingDataEmittedCallback");
+  // signalingDataEmittedCallback = f;
 }
