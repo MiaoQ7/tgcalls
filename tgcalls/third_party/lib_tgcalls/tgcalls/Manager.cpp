@@ -132,20 +132,28 @@ Manager::~Manager() {
 }
 
 void Manager::sendSignalingAsync(int delayMs, int cause) {
+    printf("Manager::sendSignalingAsync - 1\n");
 	auto task = [weak = std::weak_ptr<Manager>(shared_from_this()), cause] {
+        printf("Manager::sendSignalingAsync - 4\n");
 		const auto strong = weak.lock();
+        printf("Manager::sendSignalingAsync - 5\n");
 		if (!strong) {
 			return;
 		}
+        printf("Manager::sendSignalingAsync - 6\n");
 		if (const auto prepared = strong->_signaling.prepareForSendingService(cause)) {
+            printf("Manager::sendSignalingAsync - 7\n");
 			strong->_signalingDataEmitted(prepared->bytes);
 		}
+        printf("Manager::sendSignalingAsync - 8\n");
 	};
+    printf("Manager::sendSignalingAsync - 2\n");
 	if (delayMs) {
 		_thread->PostDelayedTask(RTC_FROM_HERE, std::move(task), delayMs);
 	} else {
 		_thread->PostTask(RTC_FROM_HERE, std::move(task));
 	}
+    printf("Manager::sendSignalingAsync - 3\n");
 }
 
 void Manager::start() {

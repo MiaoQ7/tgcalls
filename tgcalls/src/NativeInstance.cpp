@@ -298,32 +298,34 @@ void NativeInstance::startCall(vector<RtcServer> servers,
       .videoCapture = videoCapture,
       .stateUpdated =
       [=](tgcalls::State state) {
-                       py::print("stateUpdated");
+        printf("stateUpdated\n");
       },
       .signalBarsUpdated =
       [=](int count) {
-                       py::print("signalBarsUpdated");
+        printf("signalBarsUpdated\n");
       },
       .audioLevelUpdated =
       [=](float level) {
-                       py::print("audioLevelUpdated");
+        printf("audioLevelUpdated\n");
       },
       .remoteBatteryLevelIsLowUpdated =
       [=](bool isLow) {
-                       py::print("remoteBatteryLevelIsLowUpdated");
+        printf("remoteBatteryLevelIsLowUpdated\n");
       },
       .remoteMediaStateUpdated =
       [=](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
-                       py::print("remoteMediaStateUpdated");
+        printf("remoteMediaStateUpdated\n");
       },
       .remotePrefferedAspectRatioUpdated =
       [=](float ratio) {
-                       py::print("remotePrefferedAspectRatioUpdated");
+        printf("remotePrefferedAspectRatioUpdated\n");
       },
       .signalingDataEmitted =
       [=](const std::vector<uint8_t> &data) {
-                       py::print("signalingDataEmitted");
-        signalingDataEmittedCallback(data);
+        printf("signalingDataEmitted\n");
+        if (signalingDataEmittedCallback != nullptr) {
+          signalingDataEmittedCallback(data);
+        }
       },
   };
   py::print("NativeInstance-CQ-2");
@@ -376,6 +378,6 @@ void NativeInstance::receiveSignalingData(std::vector<uint8_t> &data) const {
 
 void NativeInstance::setSignalingDataEmittedCallback(
     const std::function<void(const std::vector<uint8_t> &data)> &f) {
-     py::print("setSignalingDataEmittedCallback");
+  py::print("setSignalingDataEmittedCallback");
   signalingDataEmittedCallback = f;
 }
