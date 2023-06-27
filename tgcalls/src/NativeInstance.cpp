@@ -4,6 +4,7 @@
 #include <rtc_base/ssl_adapter.h>
 
 #include "NativeInstance.h"
+#include "tgcalls/InstanceImpl.h"
 
 namespace py = pybind11;
 
@@ -20,7 +21,9 @@ NativeInstance::NativeInstance(bool logToStdErr, string logPath)
     noticeDisplayed = true;
   }
   rtc::InitializeSSL();
-//    tgcalls::Register<tgcalls::InstanceImpl>();
+  py::print("NativeInstance-1");
+  tgcalls::Register<tgcalls::InstanceImpl>();
+  py::print("NativeInstance-2");
 }
 
 NativeInstance::~NativeInstance() = default;
@@ -259,13 +262,13 @@ void NativeInstance::startCall(vector<RtcServer> servers,
 
   tgcalls::MediaDevicesConfig mediaConfig = {
       // .audioInputId = "VB-Cable",
-      .audioInputId = "default (Built-in Input)",
-      .audioOutputId = "default (Built-in Output)",
+      .audioInputId = "Unix FIFO source /home/callmic.pipe",
+      .audioOutputId = "callout",
       //            .audioInputId = "0",
       //            .audioOutputId = "0",
       .inputVolume = 1.f,
       .outputVolume = 1.f};
-
+  py::print("NativeInstance-CQ-1");
   tgcalls::Descriptor descriptor = {
       .config =
       tgcalls::Config{
@@ -285,11 +288,11 @@ void NativeInstance::startCall(vector<RtcServer> servers,
           .maxApiLayer = 92,
           .enableHighBitrateVideo = false,
           .preferredVideoCodecs = std::vector<std::string>(),
-          // .protocolVersion = tgcalls::ProtocolVersion::V0
+          .protocolVersion = tgcalls::ProtocolVersion::V0,
           //                .preferredVideoCodecs = {cricket::kVp9CodecName}
       },
       .persistentState = {std::vector<uint8_t>()},
-      //            .initialNetworkType = tgcalls::NetworkType::WiFi,
+      .initialNetworkType = tgcalls::NetworkType::WiFi,
       .encryptionKey = tgcalls::EncryptionKey(encryptionKeyValue, isOutgoing),
       .mediaDevicesConfig = mediaConfig,
       .videoCapture = videoCapture,
@@ -320,10 +323,10 @@ void NativeInstance::startCall(vector<RtcServer> servers,
       .signalingDataEmitted =
       [=](const std::vector<uint8_t> &data) {
                        py::print("signalingDataEmitted");
-        // signalingDataEmittedCallback(data);
+        signalingDataEmittedCallback(data);
       },
   };
-
+  py::print("NativeInstance-CQ-2");
   for (int i = 0, size = servers.size(); i < size; ++i) {
     RtcServer rtcServer = std::move(servers.at(i));
 
@@ -360,6 +363,7 @@ void NativeInstance::startCall(vector<RtcServer> servers,
   instanceHolder = std::make_unique<InstanceHolder>();
   instanceHolder->nativeInstance =
       tgcalls::Meta::Create("3.0.0", std::move(descriptor));
+  py::print("NativeInstance-CQ-4");
   instanceHolder->_videoCapture = videoCapture;
   instanceHolder->nativeInstance->setNetworkType(tgcalls::NetworkType::WiFi);
   instanceHolder->nativeInstance->setRequestedVideoAspect(1);
@@ -373,5 +377,5 @@ void NativeInstance::receiveSignalingData(std::vector<uint8_t> &data) const {
 void NativeInstance::setSignalingDataEmittedCallback(
     const std::function<void(const std::vector<uint8_t> &data)> &f) {
      py::print("setSignalingDataEmittedCallback");
-  // signalingDataEmittedCallback = f;
+  signalingDataEmittedCallback = f;
 }
