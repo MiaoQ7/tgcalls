@@ -63,16 +63,21 @@ void dumpStatsLog(const FilePath &path, const CallStats &stats) {
 } // namespace
 
 bool Manager::ResolvedNetworkStatus::operator==(const ResolvedNetworkStatus &rhs) {
+    printf("Manager::ResolvedNetworkStatus::operator==1\n");
     if (rhs.isLowCost != isLowCost) {
+        printf("Manager::ResolvedNetworkStatus::operator==2\n");
         return false;
     }
     if (rhs.isLowDataRequested != isLowDataRequested) {
+        printf("Manager::ResolvedNetworkStatus::operator==3\n");
         return false;
     }
+    printf("Manager::ResolvedNetworkStatus::operator==4\n");
     return true;
 }
 
 bool Manager::ResolvedNetworkStatus::operator!=(const ResolvedNetworkStatus &rhs) {
+    printf("Manager::ResolvedNetworkStatus::operator!=\n");
     return !(*this == rhs);
 }
 
