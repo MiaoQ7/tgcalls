@@ -706,8 +706,8 @@ void Thread::Dispatch(Message* pmsg) {
   TRACE_EVENT2("webrtc", "Thread::Dispatch", "src_file",
                pmsg->posted_from.file_name(), "src_func",
                pmsg->posted_from.function_name());
-  printf("Thread::Dispatch %s %s\n", pmsg->posted_from.file_name(),
-         pmsg->posted_from.function_name());
+  // printf("Thread::Dispatch %s %s\n", pmsg->posted_from.file_name(),
+  //        pmsg->posted_from.function_name());
   RTC_DCHECK_RUN_ON(this);
   int64_t start_time = TimeMillis();
   pmsg->phandler->OnMessage(pmsg);
@@ -721,8 +721,8 @@ void Thread::Dispatch(Message* pmsg) {
     // for delays that are larger than the one observed.
     dispatch_warning_ms_ = diff + 1;
   }
-  printf("Thread::Dispatch %s %s\n END", pmsg->posted_from.file_name(),
-         pmsg->posted_from.function_name());
+  // printf("Thread::Dispatch %s %s\n END", pmsg->posted_from.file_name(),
+  //        pmsg->posted_from.function_name());
 }
 
 bool Thread::IsCurrent() const {
