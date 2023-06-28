@@ -8,6 +8,8 @@
 #include "FileAudioDeviceDescriptor.h"
 #include "RawAudioDevice.h"
 #include "RawAudioDeviceDescriptor.h"
+#include "P2PFileAudioDevice.h"
+#include "P2PFileAudioDeviceDescriptor.h"
 
 namespace rtc {
   class PlatformThread;
