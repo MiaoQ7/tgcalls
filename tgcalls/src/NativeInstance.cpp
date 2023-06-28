@@ -513,3 +513,126 @@ void NativeInstance::setStateUpdatedCallback(
     const std::function<void(int)> &f) {
   stateUpdatedCallback = f;
 }
+
+void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, 
+                                        std::shared_ptr<P2PFileAudioDeviceDescriptor> fileAudioDeviceDescriptor) {
+  _P2PFileAudioDeviceDescriptor = std::move(fileAudioDeviceDescriptor);
+  auto encryptionKeyValue = std::make_shared<std::array<uint8_t, 256>>();
+  std::memcpy(encryptionKeyValue->data(), &authKey, 256);
+
+  std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
+
+  tgcalls::MediaDevicesConfig mediaConfig = {
+      .audioInputId = "",
+      .audioOutputId = "",
+      .inputVolume = 1.f,
+      .outputVolume = 1.f};
+  py::print("NativeInstance-CQ-1");
+  tgcalls::Descriptor descriptor = {
+      .config =
+      tgcalls::Config{
+          .initializationTimeout = 1000,
+          .receiveTimeout = 1000,
+          .dataSaving = tgcalls::DataSaving::Never,
+          .enableP2P = false,
+          .allowTCP = false,
+          .enableStunMarking = true,
+          .enableAEC = true,
+          .enableNS = true,
+          .enableAGC = true,
+          .enableVolumeControl = true,
+          .logPath = {"/home/tgcalls-log.txt"},
+          .maxApiLayer = 92,
+          .enableHighBitrateVideo = false,
+          .preferredVideoCodecs = std::vector<std::string>(),
+          .protocolVersion = tgcalls::ProtocolVersion::V0,
+          //                .preferredVideoCodecs = {cricket::kVp9CodecName}
+      },
+      .persistentState = {std::vector<uint8_t>()},
+      .initialNetworkType = tgcalls::NetworkType::WiFi,
+      .encryptionKey = tgcalls::EncryptionKey(encryptionKeyValue, isOutgoing),
+      .mediaDevicesConfig = mediaConfig,
+      .videoCapture = videoCapture,
+      .stateUpdated =
+      [=](tgcalls::State state) {
+        // printf("stateUpdated %d\n", (int)state);
+        if (stateUpdatedCallback != nullptr) {
+          stateUpdatedCallback((int)state);
+        }
+      },
+      .signalBarsUpdated =
+      [=](int count) {
+        // printf("signalBarsUpdated %d\n", count);
+      },
+      .audioLevelUpdated =
+      [=](float level) {
+        // printf("audioLevelUpdated\n");
+      },
+      .remoteBatteryLevelIsLowUpdated =
+      [=](bool isLow) {
+        // printf("remoteBatteryLevelIsLowUpdated\n");
+      },
+      .remoteMediaStateUpdated =
+      [=](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
+        // printf("remoteMediaStateUpdated\n");
+      },
+      .remotePrefferedAspectRatioUpdated =
+      [=](float ratio) {
+        // printf("remotePrefferedAspectRatioUpdated\n");
+      },
+      .signalingDataEmitted =
+      [=](const std::vector<uint8_t> &data) {
+        // printf("signalingDataEmitted\n");
+        if (signalingDataEmittedCallback != nullptr) {
+          signalingDataEmittedCallback(data);
+        }
+      },
+      .createAudioDeviceModule =  [&](webrtc::TaskQueueFactory *taskQueueFactory) -> rtc::scoped_refptr<webrtc::AudioDeviceModule> {
+        return WrappedAudioDeviceModuleImpl::Create(
+            webrtc::AudioDeviceModule::kDummyAudio, taskQueueFactory, std::move(_P2PFileAudioDeviceDescriptor)
+        );
+      },
+  };
+  py::print("NativeInstance-CQ-2");
+  for (int i = 0, size = servers.size(); i < size; ++i) {
+    RtcServer rtcServer = std::move(servers.at(i));
+
+    const auto host = rtcServer.ip;
+    const auto hostv6 = rtcServer.ipv6;
+    const auto port = uint16_t(rtcServer.port);
+
+    if (rtcServer.isStun) {
+      const auto pushStun = [&](const string &host) {
+        descriptor.rtcServers.push_back(
+            tgcalls::RtcServer{.host = host, .port = port, .isTurn = false});
+      };
+      pushStun(host);
+      pushStun(hostv6);
+    }
+
+    const auto username = rtcServer.login;
+    const auto password = rtcServer.password;
+    if (rtcServer.isTurn) {
+      const auto pushTurn = [&](const string &host) {
+        descriptor.rtcServers.push_back(tgcalls::RtcServer{
+            .host = host,
+            .port = port,
+            .login = username,
+            .password = password,
+            .isTurn = true,
+        });
+      };
+      pushTurn(host);
+      pushTurn(hostv6);
+    }
+  }
+
+  instanceHolder = std::make_unique<InstanceHolder>();
+  instanceHolder->nativeInstance =
+      tgcalls::Meta::Create("3.0.0", std::move(descriptor));
+  py::print("NativeInstance-CQ-4");
+  instanceHolder->_videoCapture = videoCapture;
+  instanceHolder->nativeInstance->setNetworkType(tgcalls::NetworkType::WiFi);
+  instanceHolder->nativeInstance->setRequestedVideoAspect(1);
+  instanceHolder->nativeInstance->setMuteMicrophone(false);
+}

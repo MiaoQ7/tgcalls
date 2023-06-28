@@ -90,6 +90,15 @@ PYBIND11_MODULE(tgcalls, m) {
             .def_readwrite("isRecordingPaused", &FileAudioDeviceDescriptor::_isRecordingPaused)
             .def_readwrite("playoutEndedCallback", &FileAudioDeviceDescriptor::_playoutEndedCallback);
 
+    py::classh<P2PFileAudioDeviceDescriptor>(m, "P2PFileAudioDeviceDescriptor")
+        .def(py::init<>())
+        .def_readwrite("getInputFilename", &P2PFileAudioDeviceDescriptor::_getInputFilename)
+        .def_readwrite("getOutputFilename", &P2PFileAudioDeviceDescriptor::_getOutputFilename)
+        .def_readwrite("isEndlessPlayout", &P2PFileAudioDeviceDescriptor::_isEndlessPlayout)
+        .def_readwrite("isPlayoutPaused", &P2PFileAudioDeviceDescriptor::_isPlayoutPaused)
+        .def_readwrite("isRecordingPaused", &P2PFileAudioDeviceDescriptor::_isRecordingPaused)
+        .def_readwrite("playoutEndedCallback", &P2PFileAudioDeviceDescriptor::_playoutEndedCallback);
+
     py::classh<RawAudioDeviceDescriptor>(m, "RawAudioDeviceDescriptor")
             .def(py::init<>())
             .def_readwrite("setRecordedBufferCallback", &RawAudioDeviceDescriptor::_setRecordedBufferCallback)
@@ -118,6 +127,7 @@ PYBIND11_MODULE(tgcalls, m) {
             .def(py::init<bool, string>())
             .def("startCall", &NativeInstance::startCall)
             .def("startCallVoice", &NativeInstance::startCallVoice)
+            .def("startCallP2P", &NativeInstance::startCallP2P)
             .def("stop", &NativeInstance::stop)
             .def("setupGroupCall", &NativeInstance::setupGroupCall)
             .def("startGroupCall", py::overload_cast<std::shared_ptr<FileAudioDeviceDescriptor>>(&NativeInstance::startGroupCall))

@@ -10,6 +10,9 @@ list(APPEND SOURCES
     ${src_loc}/WrappedAudioDeviceModuleImpl.cpp
     ${src_loc}/FileAudioDevice.cpp
     ${src_loc}/FileAudioDevice.h
+    ${src_loc}/P2PFileAudioDevice.h
+    ${src_loc}/P2PFileAudioDevice.cpp
+    ${src_loc}/P2PFileAudioDeviceDescriptor.h
     ${src_loc}/RawAudioDevice.h
     ${src_loc}/RawAudioDevice.cpp
     ${src_loc}/FileAudioDeviceDescriptor.h

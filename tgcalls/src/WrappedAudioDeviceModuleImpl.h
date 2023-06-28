@@ -16,6 +16,11 @@ namespace rtc {
 class WrappedAudioDeviceModuleImpl : public webrtc::AudioDeviceModule {
 public:
   static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> Create(
+    AudioLayer,
+    webrtc::TaskQueueFactory *,
+    std::shared_ptr<P2PFileAudioDeviceDescriptor>);
+
+  static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> Create(
       AudioLayer,
       webrtc::TaskQueueFactory *,
       std::shared_ptr<FileAudioDeviceDescriptor>);
@@ -24,6 +29,11 @@ public:
       AudioLayer,
       webrtc::TaskQueueFactory *,
       std::shared_ptr<RawAudioDeviceDescriptor>);
+
+  static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> CreateForTest(
+      AudioLayer,
+      webrtc::TaskQueueFactory *,
+      std::shared_ptr<P2PFileAudioDeviceDescriptor>);
 
   static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> CreateForTest(
       AudioLayer,
