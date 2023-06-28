@@ -16,9 +16,11 @@ void ping() {
 PYBIND11_TYPE_CASTER_BASE_HOLDER(T, std::unique_ptr<T>)
 
 PYBIND11_SMART_HOLDER_TYPE_CASTERS(FileAudioDeviceDescriptor)
+PYBIND11_SMART_HOLDER_TYPE_CASTERS(P2PFileAudioDeviceDescriptor)
 PYBIND11_SMART_HOLDER_TYPE_CASTERS(RawAudioDeviceDescriptor)
 
-PYBIND11_TYPE_CASTER_BASE_HOLDER(FileAudioDeviceDescriptor, std::shared_ptr<FileAudioDeviceDescriptor)
+PYBIND11_TYPE_CASTER_BASE_HOLDER(FileAudioDeviceDescriptor, std::shared_ptr<FileAudioDeviceDescriptor>)
+PYBIND11_TYPE_CASTER_BASE_HOLDER(P2PFileAudioDeviceDescriptor, std::shared_ptr<P2PFileAudioDeviceDescriptor>)
 PYBIND11_TYPE_CASTER_BASE_HOLDER(RawAudioDeviceDescriptor, std::shared_ptr<RawAudioDeviceDescriptor>)
 PYBIND11_MODULE(tgcalls, m) {
     m.def("ping", &ping);
