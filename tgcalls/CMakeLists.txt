@@ -18,6 +18,10 @@ list(APPEND SOURCES
     ${src_loc}/FileAudioDeviceDescriptor.h
     ${src_loc}/RawAudioDeviceDescriptor.h
     ${src_loc}/RawAudioDeviceDescriptor.cpp
+    ${src_loc}/P2PRawAudioDevice.h
+    ${src_loc}/P2PRawAudioDevice.cpp
+    ${src_loc}/P2PRawAudioDeviceDescriptor.h
+    ${src_loc}/P2PRawAudioDeviceDescriptor.cpp
     ${src_loc}/NativeInstance.h
     ${src_loc}/NativeInstance.cpp
     ${src_loc}/RtcServer.h

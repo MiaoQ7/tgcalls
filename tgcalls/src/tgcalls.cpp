@@ -18,10 +18,12 @@ PYBIND11_TYPE_CASTER_BASE_HOLDER(T, std::unique_ptr<T>)
 PYBIND11_SMART_HOLDER_TYPE_CASTERS(FileAudioDeviceDescriptor)
 PYBIND11_SMART_HOLDER_TYPE_CASTERS(P2PFileAudioDeviceDescriptor)
 PYBIND11_SMART_HOLDER_TYPE_CASTERS(RawAudioDeviceDescriptor)
+PYBIND11_SMART_HOLDER_TYPE_CASTERS(P2PRawAudioDeviceDescriptor)
 
 PYBIND11_TYPE_CASTER_BASE_HOLDER(FileAudioDeviceDescriptor, std::shared_ptr<FileAudioDeviceDescriptor>)
 PYBIND11_TYPE_CASTER_BASE_HOLDER(P2PFileAudioDeviceDescriptor, std::shared_ptr<P2PFileAudioDeviceDescriptor>)
 PYBIND11_TYPE_CASTER_BASE_HOLDER(RawAudioDeviceDescriptor, std::shared_ptr<RawAudioDeviceDescriptor>)
+PYBIND11_TYPE_CASTER_BASE_HOLDER(P2PRawAudioDeviceDescriptor, std::shared_ptr<P2PRawAudioDeviceDescriptor>)
 PYBIND11_MODULE(tgcalls, m) {
     m.def("ping", &ping);
 
@@ -107,6 +109,13 @@ PYBIND11_MODULE(tgcalls, m) {
             .def_readwrite("getPlayedBufferCallback", &RawAudioDeviceDescriptor::_getPlayedBufferCallback)
             .def_readwrite("isPlayoutPaused", &RawAudioDeviceDescriptor::_isPlayoutPaused)
             .def_readwrite("isRecordingPaused", &RawAudioDeviceDescriptor::_isRecordingPaused);
+
+    py::classh<P2PRawAudioDeviceDescriptor>(m, "P2PRawAudioDeviceDescriptor")
+        .def(py::init<>())
+        .def_readwrite("setRecordedBufferCallback", &P2PRawAudioDeviceDescriptor::_setRecordedBufferCallback)
+        .def_readwrite("getPlayedBufferCallback", &P2PRawAudioDeviceDescriptor::_getPlayedBufferCallback)
+        .def_readwrite("isPlayoutPaused", &P2PRawAudioDeviceDescriptor::_isPlayoutPaused)
+        .def_readwrite("isRecordingPaused", &P2PRawAudioDeviceDescriptor::_isRecordingPaused);
 
     py::class_<tgcalls::GroupInstanceInterface::AudioDevice>(m, "AudioDevice")
             .def_readwrite("name", &tgcalls::GroupInstanceInterface::AudioDevice::name)

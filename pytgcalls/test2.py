@@ -452,7 +452,16 @@ async def start(client1, make_out, make_inc):
             out_call.native_instance = tgcalls.NativeInstance(True, "/home/tgcalls-native.log")
             out_call.native_instance.setSignalingDataEmittedCallback(out_call.signalling_data_emitted_callback)
             call.native_instance.setStateUpdatedCallback(lambda a: print(f'call state: {a}'))
-            call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
+            descriptor = tgcalls.P2PFileAudioDeviceDescriptor()
+            descriptor.getInputFilename = lambda: '/home/aa.pcm'
+            descriptor.getOutputFilename = lambda: '/home/bb.pcm'
+            descriptor.isEndlessPlayout = lambda: True
+            descriptor.isPlayoutPaused = lambda: False
+            descriptor.isRecordingPaused = lambda: False
+            descriptor.playoutEndedCallback = lambda a: print(f'playout ended {a}')
+            call.native_instance.startCallP2P(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
+
+            # call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
                 
             # out_call.native_instance.startCall(
             #     rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], out_call.is_outgoing, log_path1
@@ -481,8 +490,8 @@ if __name__ == '__main__':
     # tc1 = TelegramClient(os.environ.get('SESSION_NAME3'), int(os.environ['API_ID']), os.environ['API_HASH'])
     # tc1.start()
 
-    make_out = False
-    make_inc = True
+    make_out = True
+    make_inc = False
 
     # c1, c2 = c2, c1
 
