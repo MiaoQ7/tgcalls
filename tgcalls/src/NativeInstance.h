@@ -35,6 +35,7 @@ public:
     std::shared_ptr<RawAudioDeviceDescriptor> _rawAudioDeviceDescriptor;
     std::shared_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
     std::shared_ptr<P2PFileAudioDeviceDescriptor> _P2PFileAudioDeviceDescriptor;
+    std::shared_ptr<P2PRawAudioDeviceDescriptor> _P2PRawAudioDeviceDescriptor;
 
     NativeInstance(bool, string);
     ~NativeInstance();
@@ -82,6 +83,8 @@ public:
     void setSignalingDataEmittedCallback(const std::function<void(const std::vector<uint8_t> &data)> &f);
     void setStateUpdatedCallback(const std::function<void(int)> &f);
     void startCallP2P(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::shared_ptr<P2PFileAudioDeviceDescriptor> fileAudioDeviceDescriptor);
+    void startCallP2PRaw(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::shared_ptr<P2PRawAudioDeviceDescriptor> rawAudioDeviceDescriptor);
+    void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
 
 private:
     void createInstanceHolder(

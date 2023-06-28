@@ -10,6 +10,8 @@
 #include "RawAudioDeviceDescriptor.h"
 #include "P2PFileAudioDevice.h"
 #include "P2PFileAudioDeviceDescriptor.h"
+#include "P2PRawAudioDevice.h"
+#include "P2PRawAudioDeviceDescriptor.h"
 
 namespace rtc {
   class PlatformThread;
@@ -32,6 +34,12 @@ public:
       webrtc::TaskQueueFactory *,
       std::shared_ptr<RawAudioDeviceDescriptor>);
 
+  static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> Create(
+      AudioLayer,
+      webrtc::TaskQueueFactory *,
+      std::shared_ptr<P2PRawAudioDeviceDescriptor>);
+
+
   static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> CreateForTest(
       AudioLayer,
       webrtc::TaskQueueFactory *,
@@ -46,4 +54,9 @@ public:
       AudioLayer,
       webrtc::TaskQueueFactory *,
       std::shared_ptr<RawAudioDeviceDescriptor>);
+
+  static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> CreateForTest(
+      AudioLayer,
+      webrtc::TaskQueueFactory *,
+      std::shared_ptr<P2PRawAudioDeviceDescriptor>);
 };

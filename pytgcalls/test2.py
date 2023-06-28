@@ -452,14 +452,21 @@ async def start(client1, make_out, make_inc):
             out_call.native_instance = tgcalls.NativeInstance(True, "/home/tgcalls-native.log")
             out_call.native_instance.setSignalingDataEmittedCallback(out_call.signalling_data_emitted_callback)
             call.native_instance.setStateUpdatedCallback(lambda a: print(f'call state: {a}'))
-            descriptor = tgcalls.P2PFileAudioDeviceDescriptor()
-            descriptor.getInputFilename = lambda: '/home/aa.pcm'
-            descriptor.getOutputFilename = lambda: '/home/bb.pcm'
-            descriptor.isEndlessPlayout = lambda: True
+            # descriptor = tgcalls.P2PFileAudioDeviceDescriptor()
+            # descriptor.getInputFilename = lambda: '/home/aa.pcm'
+            # descriptor.getOutputFilename = lambda: '/home/bb.pcm'
+            # descriptor.isEndlessPlayout = lambda: True
+            # descriptor.isPlayoutPaused = lambda: False
+            # descriptor.isRecordingPaused = lambda: False
+            # descriptor.playoutEndedCallback = lambda a: print(f'playout ended {a}')
+            # call.native_instance.startCallP2P(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
+            f = open('/home/aa-1.pcm', 'rb')
+            descriptor = tgcalls.P2PRawAudioDeviceDescriptor()
+            descriptor.setRecordedBufferCallback = lambda a, b: print(f'recorded buffer {len(a)} {b}')
+            descriptor.getPlayedBufferCallback = lambda a: f.read(a) or b''
             descriptor.isPlayoutPaused = lambda: False
             descriptor.isRecordingPaused = lambda: False
-            descriptor.playoutEndedCallback = lambda a: print(f'playout ended {a}')
-            call.native_instance.startCallP2P(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
+            call.native_instance.startCallP2PRaw(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
 
             # call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
                 
