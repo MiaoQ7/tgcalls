@@ -26,6 +26,7 @@ public:
     int _outgoingAudioBitrateKbit = 128;
 
     std::function<void(const std::vector<uint8_t> &data)> signalingDataEmittedCallback;
+    std::function<void(int)> stateUpdatedCallback;
 
     std::function<void(tgcalls::GroupJoinPayload payload)> _emitJoinPayloadCallback = nullptr;
     std::function<void(bool)> _networkStateUpdated = nullptr;
@@ -38,6 +39,11 @@ public:
     ~NativeInstance();
 
     void startCall(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::string logPath);
+
+    // 语音通话
+    void startCallVoice(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::string tag, std::string audioInputId, std::string audioOutputId);
+
+    void stop();
 
     void setupGroupCall(
             std::function<void(tgcalls::GroupJoinPayload)> &,
@@ -73,6 +79,7 @@ public:
     void receiveSignalingData(std::vector<uint8_t> &data) const;
     void setJoinResponsePayload(std::string const &) const;
     void setSignalingDataEmittedCallback(const std::function<void(const std::vector<uint8_t> &data)> &f);
+    void setStateUpdatedCallback(const std::function<void(int)> &f);
 
 private:
     void createInstanceHolder(

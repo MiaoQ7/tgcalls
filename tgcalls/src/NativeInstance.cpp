@@ -298,31 +298,34 @@ void NativeInstance::startCall(vector<RtcServer> servers,
       .videoCapture = videoCapture,
       .stateUpdated =
       [=](tgcalls::State state) {
-        printf("stateUpdated\n");
+        // printf("stateUpdated %d\n", (int)state);
+        if (stateUpdatedCallback != nullptr) {
+          stateUpdatedCallback((int)state);
+        }
       },
       .signalBarsUpdated =
       [=](int count) {
-        printf("signalBarsUpdated\n");
+        // printf("signalBarsUpdated %d\n", count);
       },
       .audioLevelUpdated =
       [=](float level) {
-        printf("audioLevelUpdated\n");
+        // printf("audioLevelUpdated\n");
       },
       .remoteBatteryLevelIsLowUpdated =
       [=](bool isLow) {
-        printf("remoteBatteryLevelIsLowUpdated\n");
+        // printf("remoteBatteryLevelIsLowUpdated\n");
       },
       .remoteMediaStateUpdated =
       [=](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
-        printf("remoteMediaStateUpdated\n");
+        // printf("remoteMediaStateUpdated\n");
       },
       .remotePrefferedAspectRatioUpdated =
       [=](float ratio) {
-        printf("remotePrefferedAspectRatioUpdated\n");
+        // printf("remotePrefferedAspectRatioUpdated\n");
       },
       .signalingDataEmitted =
       [=](const std::vector<uint8_t> &data) {
-        printf("signalingDataEmitted\n");
+        // printf("signalingDataEmitted\n");
         if (signalingDataEmittedCallback != nullptr) {
           signalingDataEmittedCallback(data);
         }
@@ -372,12 +375,141 @@ void NativeInstance::startCall(vector<RtcServer> servers,
   instanceHolder->nativeInstance->setMuteMicrophone(false);
 }
 
+void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, 
+  std::string tag, std::string audioInputId, std::string audioOutputId) {
+  auto encryptionKeyValue = std::make_shared<std::array<uint8_t, 256>>();
+  std::memcpy(encryptionKeyValue->data(), &authKey, 256);
+
+  std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
+
+  tgcalls::MediaDevicesConfig mediaConfig = {
+      .audioInputId = audioInputId,
+      .audioOutputId = audioOutputId,
+      .inputVolume = 1.f,
+      .outputVolume = 1.f};
+  py::print("NativeInstance-CQ-1");
+  tgcalls::Descriptor descriptor = {
+      .config =
+      tgcalls::Config{
+          .initializationTimeout = 1000,
+          .receiveTimeout = 1000,
+          .dataSaving = tgcalls::DataSaving::Never,
+          .enableP2P = false,
+          .allowTCP = false,
+          .enableStunMarking = true,
+          .enableAEC = true,
+          .enableNS = true,
+          .enableAGC = true,
+          .enableVolumeControl = true,
+          .logPath = {"/home/tgcalls-log.txt"},
+          .maxApiLayer = 92,
+          .enableHighBitrateVideo = false,
+          .preferredVideoCodecs = std::vector<std::string>(),
+          .protocolVersion = tgcalls::ProtocolVersion::V0,
+          //                .preferredVideoCodecs = {cricket::kVp9CodecName}
+      },
+      .persistentState = {std::vector<uint8_t>()},
+      .initialNetworkType = tgcalls::NetworkType::WiFi,
+      .encryptionKey = tgcalls::EncryptionKey(encryptionKeyValue, isOutgoing),
+      .mediaDevicesConfig = mediaConfig,
+      .videoCapture = videoCapture,
+      .stateUpdated =
+      [=](tgcalls::State state) {
+        // printf("stateUpdated %d\n", (int)state);
+        if (stateUpdatedCallback != nullptr) {
+          stateUpdatedCallback((int)state);
+        }
+      },
+      .signalBarsUpdated =
+      [=](int count) {
+        // printf("signalBarsUpdated %d\n", count);
+      },
+      .audioLevelUpdated =
+      [=](float level) {
+        // printf("audioLevelUpdated\n");
+      },
+      .remoteBatteryLevelIsLowUpdated =
+      [=](bool isLow) {
+        // printf("remoteBatteryLevelIsLowUpdated\n");
+      },
+      .remoteMediaStateUpdated =
+      [=](tgcalls::AudioState audioState, tgcalls::VideoState videoState) {
+        // printf("remoteMediaStateUpdated\n");
+      },
+      .remotePrefferedAspectRatioUpdated =
+      [=](float ratio) {
+        // printf("remotePrefferedAspectRatioUpdated\n");
+      },
+      .signalingDataEmitted =
+      [=](const std::vector<uint8_t> &data) {
+        // printf("signalingDataEmitted\n");
+        if (signalingDataEmittedCallback != nullptr) {
+          signalingDataEmittedCallback(data);
+        }
+      },
+  };
+  py::print("NativeInstance-CQ-2");
+  for (int i = 0, size = servers.size(); i < size; ++i) {
+    RtcServer rtcServer = std::move(servers.at(i));
+
+    const auto host = rtcServer.ip;
+    const auto hostv6 = rtcServer.ipv6;
+    const auto port = uint16_t(rtcServer.port);
+
+    if (rtcServer.isStun) {
+      const auto pushStun = [&](const string &host) {
+        descriptor.rtcServers.push_back(
+            tgcalls::RtcServer{.host = host, .port = port, .isTurn = false});
+      };
+      pushStun(host);
+      pushStun(hostv6);
+    }
+
+    const auto username = rtcServer.login;
+    const auto password = rtcServer.password;
+    if (rtcServer.isTurn) {
+      const auto pushTurn = [&](const string &host) {
+        descriptor.rtcServers.push_back(tgcalls::RtcServer{
+            .host = host,
+            .port = port,
+            .login = username,
+            .password = password,
+            .isTurn = true,
+        });
+      };
+      pushTurn(host);
+      pushTurn(hostv6);
+    }
+  }
+
+  instanceHolder = std::make_unique<InstanceHolder>();
+  instanceHolder->nativeInstance =
+      tgcalls::Meta::Create("3.0.0", std::move(descriptor));
+  py::print("NativeInstance-CQ-4");
+  instanceHolder->_videoCapture = videoCapture;
+  instanceHolder->nativeInstance->setNetworkType(tgcalls::NetworkType::WiFi);
+  instanceHolder->nativeInstance->setRequestedVideoAspect(1);
+  instanceHolder->nativeInstance->setMuteMicrophone(false);
+}
+
+void NativeInstance::stop() {
+  if (instanceHolder != nullptr && instanceHolder->nativeInstance != nullptr) {
+    instanceHolder->nativeInstance->stop([&](tgcalls::FinalState state) {
+      printf("stop state %s\n", state.debugLog.c_str());
+    });
+  }
+}
+
 void NativeInstance::receiveSignalingData(std::vector<uint8_t> &data) const {
   instanceHolder->nativeInstance->receiveSignalingData(data);
 }
 
 void NativeInstance::setSignalingDataEmittedCallback(
     const std::function<void(const std::vector<uint8_t> &data)> &f) {
-  py::print("setSignalingDataEmittedCallback");
   signalingDataEmittedCallback = f;
+}
+
+void NativeInstance::setStateUpdatedCallback(
+    const std::function<void(int)> &f) {
+  stateUpdatedCallback = f;
 }

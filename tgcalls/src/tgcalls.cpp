@@ -117,6 +117,8 @@ PYBIND11_MODULE(tgcalls, m) {
     py::class_<NativeInstance>(m, "NativeInstance")
             .def(py::init<bool, string>())
             .def("startCall", &NativeInstance::startCall)
+            .def("startCallVoice", &NativeInstance::startCallVoice)
+            .def("stop", &NativeInstance::stop)
             .def("setupGroupCall", &NativeInstance::setupGroupCall)
             .def("startGroupCall", py::overload_cast<std::shared_ptr<FileAudioDeviceDescriptor>>(&NativeInstance::startGroupCall))
             .def("startGroupCall", py::overload_cast<std::shared_ptr<RawAudioDeviceDescriptor>>(&NativeInstance::startGroupCall))
@@ -138,5 +140,6 @@ PYBIND11_MODULE(tgcalls, m) {
             .def("setVideoCapture", &NativeInstance::setVideoCapture)
             .def("emitJoinPayload", &NativeInstance::emitJoinPayload)
             .def("receiveSignalingData", &NativeInstance::receiveSignalingData)
-            .def("setSignalingDataEmittedCallback", &NativeInstance::setSignalingDataEmittedCallback);
+            .def("setSignalingDataEmittedCallback", &NativeInstance::setSignalingDataEmittedCallback)
+            .def("setStateUpdatedCallback", &NativeInstance::setStateUpdatedCallback);
 }

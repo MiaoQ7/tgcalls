@@ -43,7 +43,9 @@ InstanceImpl::InstanceImpl(Descriptor &&descriptor)
 }
 
 InstanceImpl::~InstanceImpl() {
+    printf("InstanceImpl::~InstanceImpl()\n");
 	rtc::LogMessage::RemoveLogToStream(_logSink.get());
+    printf("InstanceImpl::~InstanceImpl() END \n");
 }
 
 void InstanceImpl::receiveSignalingData(const std::vector<uint8_t> &data) {

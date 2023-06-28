@@ -136,7 +136,10 @@ class Call:
                 self.client.remove_handler(self._update_handler, -1)
             except ValueError:
                 pass
-
+        
+        if (self.native_instance):
+            self.native_instance.stop()
+            del self.native_instance
         asyncio.ensure_future(_())
 
     def update_state(self, val) -> None:
@@ -171,13 +174,14 @@ class Call:
             r = await self.client.send(
                 functions.phone.DiscardCall(
                     peer=types.InputPhoneCall(id=self.call_id, access_hash=self.call_access_hash),
-                    duration=0,  # TODO
+                    duration=0,
                     connection_id=0,
                     reason=reason,
                 )
             )
             print(self.call_id)
         except (errors.CallAlreadyDeclined, errors.CallAlreadyAccepted) as e:
+            print(e)
             pass
 
         self.call_ended()
@@ -429,14 +433,14 @@ async def start(client1, make_out, make_inc):
 
                 call.native_instance = tgcalls.NativeInstance(True, "/home/tgcalls-native.log")
                 call.native_instance.setSignalingDataEmittedCallback(call.signalling_data_emitted_callback)
-                call.native_instance.startCall(
-                    rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, log_path2
-                )
+                call.native_instance.setStateUpdatedCallback(lambda a: print(f'call state: {a}'))
+                call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
+                # call.native_instance.startCall(
+                #     rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, log_path2
+                # )
 
-                await asyncio.sleep(10)
-                await call.received_call()
-                # await asyncio.sleep(60)
-                # await call.discard_call()
+                await asyncio.sleep(60)
+                await call.discard_call()
 
     if out_call is not None:
 
@@ -447,19 +451,20 @@ async def start(client1, make_out, make_inc):
 
             out_call.native_instance = tgcalls.NativeInstance(True, "/home/tgcalls-native.log")
             out_call.native_instance.setSignalingDataEmittedCallback(out_call.signalling_data_emitted_callback)
-            out_call.native_instance.startCall(
-                rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], out_call.is_outgoing, log_path1
-            )
+            call.native_instance.setStateUpdatedCallback(lambda a: print(f'call state: {a}'))
+            call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
+                
+            # out_call.native_instance.startCall(
+            #     rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], out_call.is_outgoing, log_path1
+            # )
 
-            await asyncio.sleep(10)
-            await call.received_call()
-            # await asyncio.sleep(60)
-            # await call.discard_call()
+            await asyncio.sleep(10*60)
+            await call.discard_call()
 
     await pyrogram.idle()
 
 if __name__ == '__main__':
-    tgcalls.ping()
+    tgcalls.ping()  
 
     # c1 = pyrogram.Client(
     #     os.environ.get('SESSION_NAME'),
@@ -476,8 +481,8 @@ if __name__ == '__main__':
     # tc1 = TelegramClient(os.environ.get('SESSION_NAME3'), int(os.environ['API_ID']), os.environ['API_HASH'])
     # tc1.start()
 
-    make_out = True
-    make_inc = False
+    make_out = False
+    make_inc = True
 
     # c1, c2 = c2, c1
 
