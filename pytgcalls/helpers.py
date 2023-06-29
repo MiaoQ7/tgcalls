@@ -516,3 +516,24 @@ def get_real_elapsed_time() -> float:
         Time to use for measuring call duration
     """
     return time.perf_counter()
+
+import subprocess
+
+def exec_shell(command):
+  # 执行命令
+  process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+  # 等待命令执行完成
+  process.wait()
+
+  # 获取命令的输出和错误信息
+  output = process.stdout.read()
+  error = process.stderr.read()
+
+  # 将输出和错误信息解码为字符串
+  output = output.decode(encoding="utf-8")
+  error = error.decode(encoding="utf-8")
+
+  # 返回命令的输出和错误信息
+  result = {"output": output, "error": error}
+  return result
