@@ -463,8 +463,8 @@ async def start(client1, make_out, make_inc):
             # descriptor.isRecordingPaused = lambda: False
             # descriptor.playoutEndedCallback = lambda a: print(f'playout ended {a}')
             # call.native_instance.startCallP2P(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
-            videoStream = VideoStream("/home/12.mp4", True, lambda a: print(f'video stream ended {a}'))
-            audioStream = AudioStream("/home/12.mp4", True, lambda a: print(f'audio stream ended {a}'), video_stream=videoStream)
+            videoStream = VideoStream("/home/22.mp4", True, lambda a: print(f'video stream ended {a}'))
+            audioStream = AudioStream("/home/22.mp4", True, lambda a: print(f'audio stream ended {a}'), video_stream=videoStream)
 
             def __video_callback():
                 frame = b''

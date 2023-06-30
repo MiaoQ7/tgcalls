@@ -762,12 +762,26 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
 }
 
 void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height) {
+  _pythonVideoSourceImpl = PythonVideoTrackSource::createPtr(
+          std::make_unique<PythonSource>(std::move(getNextFrameBuffer), fps, width, height),fps);
   _videoCapture = tgcalls::VideoCaptureInterface::Create(
       tgcalls::StaticThreads::getThreads(),
-      PythonVideoTrackSource::createPtr(
-          std::make_unique<PythonSource>(std::move(getNextFrameBuffer), fps, width, height),fps),
+      _pythonVideoSourceImpl,
       "python_video_track_source"
   );
 
   instanceHolder->nativeInstance->setVideoCapture(std::move(_videoCapture));
+}
+
+void NativeInstance::setP2PVideoRecord(std::string file) {
+  if (_pythonVideoSourceImpl == nullptr) {
+    return;
+  }
+  PythonVideoSourceImpl* pythonVideoSourceImpl = dynamic_cast<PythonVideoSourceImpl*>(_pythonVideoSourceImpl.get());
+  // rtc::VideoSinkInterface<VideoFrameT> *sink, const rtc::VideoSinkWants &wants
+  rtc::VideoSinkWants wants = rtc::VideoSinkWants();
+  wants.resolutions = { rtc::VideoSinkWants::FrameSize(1280, 720) };
+  PythonRecord record = PythonRecord(file);
+  _pythonRecordSink = &record;
+  pythonVideoSourceImpl->GetSource_().AddOrUpdateSink(&record, wants);
 }

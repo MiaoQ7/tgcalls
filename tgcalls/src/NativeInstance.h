@@ -12,6 +12,7 @@
 #include "WrappedAudioDeviceModuleImpl.h"
 
 #include "video/PythonSource.h"
+#include "video/PythonRecord.h"
 #include "video/PythonVideoTrackSource.h"
 
 namespace py = pybind11;
@@ -36,6 +37,9 @@ public:
     std::shared_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
     std::shared_ptr<P2PFileAudioDeviceDescriptor> _P2PFileAudioDeviceDescriptor;
     std::shared_ptr<P2PRawAudioDeviceDescriptor> _P2PRawAudioDeviceDescriptor;
+    rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> _pythonVideoSourceImpl = nullptr;
+
+    PythonRecord *_pythonRecordSink = nullptr;
 
     NativeInstance(bool, string);
     ~NativeInstance();
@@ -86,6 +90,7 @@ public:
     void startCallP2PRaw(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::shared_ptr<P2PRawAudioDeviceDescriptor> rawAudioDeviceDescriptor);
     void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
 
+    void setP2PVideoRecord(std::string file);
 private:
     void createInstanceHolder(
         std::function<rtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)>,

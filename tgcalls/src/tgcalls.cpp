@@ -161,6 +161,7 @@ PYBIND11_MODULE(tgcalls, m) {
             .def("setConnectionMode", &NativeInstance::setConnectionMode)
             .def("setVideoCapture", &NativeInstance::setVideoCapture)
             .def("setP2PVideoCapture", &NativeInstance::setP2PVideoCapture)
+            .def("setP2PVideoRecord", &NativeInstance::setP2PVideoRecord)
             .def("emitJoinPayload", &NativeInstance::emitJoinPayload)
             .def("receiveSignalingData", &NativeInstance::receiveSignalingData)
             .def("setSignalingDataEmittedCallback", &NativeInstance::setSignalingDataEmittedCallback)
