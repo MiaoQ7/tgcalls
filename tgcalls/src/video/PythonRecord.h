@@ -13,6 +13,8 @@ class PythonRecord : public rtc::VideoSinkInterface<webrtc::VideoFrame> {
 public:
   PythonRecord(std::string file);
 
+  PythonRecord(std::string file, int width, int height);
+
   ~PythonRecord();
 
   void OnFrame(const webrtc::VideoFrame& frame);
@@ -20,7 +22,11 @@ public:
   void OnDiscardedFrame();
 
   static std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> createPtr(std::string file);
+
+  static std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> createPtr(std::string file, int width, int height);
 private:
   std::string _file;
+  int width = 640;
+  int height = 360;
   FILE* _fp = nullptr;
 };

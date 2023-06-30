@@ -17,11 +17,14 @@ PythonRecord::~PythonRecord() {
 }
 
 void PythonRecord::OnFrame(const webrtc::VideoFrame& frame) {
-  auto vfb = frame.video_frame_buffer();
+  rtc::scoped_refptr<webrtc::VideoFrameBuffer> buffer(frame.video_frame_buffer());
+  rtc::scoped_refptr<webrtc::I420Buffer> newYUVFrame = webrtc::I420Buffer::Create(width, height);
+  newYUVFrame->ScaleFrom(*buffer->ToI420());
+
   if (_fp != nullptr) {
-    fwrite(vfb.get()->GetI420()->DataY(), 1, frame.height() * frame.width(), _fp);
-    fwrite(vfb.get()->GetI420()->DataU(), 1, frame.height() * frame.width() / 4, _fp);
-    fwrite(vfb.get()->GetI420()->DataV(), 1, frame.height() * frame.width() / 4, _fp);
+    fwrite(newYUVFrame.get()->GetI420()->DataY(), 1, width * height, _fp);
+    fwrite(newYUVFrame.get()->GetI420()->DataU(), 1, width * height / 4, _fp);
+    fwrite(newYUVFrame.get()->GetI420()->DataV(), 1, width * height / 4, _fp);
     fflush(_fp);
   }
 }
@@ -32,4 +35,9 @@ void PythonRecord::OnDiscardedFrame() {
 
 std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> PythonRecord::createPtr(std::string file) {
   return std::make_shared<PythonRecord>(file);
+}
+
+std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> PythonRecord::createPtr(std::string file, int width, int height)
+{
+  return std::make_shared<PythonRecord>(file, width, height);
 }
