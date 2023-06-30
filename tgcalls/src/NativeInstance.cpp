@@ -773,12 +773,12 @@ void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFram
 }
 
 void NativeInstance::setP2PVideoRecord(std::string file) {
-  printf("setP2PVideoRecord 1");
+  // printf("setP2PVideoRecord 1");
   if (instanceHolder == nullptr || instanceHolder->nativeInstance == nullptr) {
     return;
   }
-  printf("setP2PVideoRecord 2");
+  // printf("setP2PVideoRecord 2");
   _pythonRecordSink = PythonRecord::createPtr(file);
   instanceHolder->nativeInstance->setIncomingVideoOutput(std::move(_pythonRecordSink));
-  printf("setP2PVideoRecord 3");
+  // printf("setP2PVideoRecord 3");
 }

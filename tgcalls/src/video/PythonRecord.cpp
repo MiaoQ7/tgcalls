@@ -7,13 +7,13 @@ PythonRecord::PythonRecord(std::string file) {
 }
 
 PythonRecord::~PythonRecord() {
-  printf("===========PythonRecord Destory Start");
+  printf("===========PythonRecord Destory Start\n");
   if (_fp != nullptr) {
     fflush(_fp);
     fclose(_fp);
     _fp = nullptr;
   }
-  printf("===========PythonRecord Destory END");
+  printf("===========PythonRecord Destory END\n");
 }
 
 void PythonRecord::OnFrame(const webrtc::VideoFrame& frame) {
@@ -27,7 +27,7 @@ void PythonRecord::OnFrame(const webrtc::VideoFrame& frame) {
 }
 
 void PythonRecord::OnDiscardedFrame() {
-  printf("-- OnDiscardedFrame --");
+  printf("-- OnDiscardedFrame --\n");
 }
 
 std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> PythonRecord::createPtr(std::string file) {
