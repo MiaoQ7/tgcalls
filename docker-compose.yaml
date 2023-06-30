@@ -6,7 +6,7 @@ services:
       dockerfile: build/manylinux/dev/Dockerfile
       args:
         MANYLINUX_PLATFORM: manylinux2014_x86_64
-    command: ["cp39-cp39 cp310-cp310", "manylinux2014_x86_64"]
+    command: ["cp310-cp310", "manylinux2014_x86_64"]
     environment:
       - ROOT_PATH=/usr/src
     volumes:

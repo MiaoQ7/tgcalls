@@ -9,16 +9,17 @@
 #include <libyuv.h>
 #include <media/base/video_broadcaster.h>
 
-using VideoFrameT = webrtc::VideoFrame;
-class PythonRecord : public rtc::VideoSinkInterface<VideoFrameT> {
+class PythonRecord : public rtc::VideoSinkInterface<webrtc::VideoFrame> {
 public:
   PythonRecord(std::string file);
 
   ~PythonRecord();
 
-  void OnFrame(const VideoFrameT& frame);
+  void OnFrame(const webrtc::VideoFrame& frame);
 
   void OnDiscardedFrame();
+
+  static std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> createPtr(std::string file);
 private:
   std::string _file;
   FILE* _fp = nullptr;

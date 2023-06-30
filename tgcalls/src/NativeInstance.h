@@ -37,9 +37,8 @@ public:
     std::shared_ptr<tgcalls::VideoCaptureInterface> _videoCapture;
     std::shared_ptr<P2PFileAudioDeviceDescriptor> _P2PFileAudioDeviceDescriptor;
     std::shared_ptr<P2PRawAudioDeviceDescriptor> _P2PRawAudioDeviceDescriptor;
-    rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> _pythonVideoSourceImpl = nullptr;
 
-    PythonRecord *_pythonRecordSink = nullptr;
+    std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> _pythonRecordSink = nullptr;
 
     NativeInstance(bool, string);
     ~NativeInstance();

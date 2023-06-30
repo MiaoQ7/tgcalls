@@ -188,7 +188,7 @@ class Call:
         self.call_ended()
 
     def signalling_data_emitted_callback(self, data):
-        print(threading.currentThread().getName())
+        # print(threading.currentThread().getName())
         async def _():
             await self.client.send(
                 functions.phone.SendSignalingData(
@@ -463,8 +463,8 @@ async def start(client1, make_out, make_inc):
             # descriptor.isRecordingPaused = lambda: False
             # descriptor.playoutEndedCallback = lambda a: print(f'playout ended {a}')
             # call.native_instance.startCallP2P(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
-            videoStream = VideoStream("/home/22.mp4", True, lambda a: print(f'video stream ended {a}'))
-            audioStream = AudioStream("/home/22.mp4", True, lambda a: print(f'audio stream ended {a}'), video_stream=videoStream)
+            videoStream = VideoStream("/home/44.mp4", True, lambda a: print(f'video stream ended {a}'))
+            audioStream = AudioStream("/home/44.mp4", True, lambda a: print(f'audio stream ended {a}'), video_stream=videoStream)
 
             def __video_callback():
                 frame = b''
@@ -485,8 +485,9 @@ async def start(client1, make_out, make_inc):
                 return frame.ljust(length, b'\0')
 
             # f = open('/home/aa-1.pcm', 'rb')
+            exec_shell("rm -fr /home/audio-out")
             exec_shell("rm -fr /home/video-out")
-            f = open('/home/video-out', 'wb')
+            f = open('/home/audio-out', 'wb')
             descriptor = tgcalls.P2PRawAudioDeviceDescriptor()
             descriptor.setRecordedBufferCallback = lambda a, b: f.write(a)
             descriptor.getPlayedBufferCallback = lambda a: __audio_callback(a)
@@ -495,23 +496,27 @@ async def start(client1, make_out, make_inc):
             call.native_instance.startCallP2PRaw(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, descriptor)
             call.native_instance.setP2PVideoCapture(__video_callback, videoStream.get_video_info().fps, 
                                 videoStream.get_video_info().width, videoStream.get_video_info().height)
-
+            print("setP2PVideoRecord")
+            print(call.native_instance.setP2PVideoRecord)
+            call.native_instance.setP2PVideoRecord("/home/video-out")
+            print("start -1--")
             videoStream.start()
             audioStream.start()
+            print("start -2--")
             # call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
                 
             # out_call.native_instance.startCall(
             #     rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], out_call.is_outgoing, log_path1
             # )
 
-            await asyncio.sleep(5*60)
+            await asyncio.sleep(60)
             await call.discard_call()
 
     await pyrogram.idle()
 
 if __name__ == '__main__':
     tgcalls.ping()  
-    print(threading.currentThread().getName())
+    # print(threading.currentThread().getName())
     # c1 = pyrogram.Client(
     #     os.environ.get('SESSION_NAME'),
     #     api_hash=os.environ.get('API_HASH'),
