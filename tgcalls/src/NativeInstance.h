@@ -90,6 +90,8 @@ public:
     void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
 
     void setP2PVideoRecord(std::string file);
+
+    void setRequestedVideoAspect(float aspect);
 private:
     void createInstanceHolder(
         std::function<rtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)>,

@@ -782,3 +782,11 @@ void NativeInstance::setP2PVideoRecord(std::string file) {
   instanceHolder->nativeInstance->setIncomingVideoOutput(std::move(_pythonRecordSink));
   // printf("setP2PVideoRecord 3");
 }
+
+void NativeInstance::setRequestedVideoAspect(float aspect)
+{
+  if (instanceHolder == nullptr || instanceHolder->nativeInstance == nullptr) {
+    return;
+  }
+  instanceHolder->nativeInstance->setRequestedVideoAspect(aspect);
+}

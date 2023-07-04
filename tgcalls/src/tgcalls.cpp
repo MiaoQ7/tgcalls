@@ -165,5 +165,6 @@ PYBIND11_MODULE(tgcalls, m) {
             .def("emitJoinPayload", &NativeInstance::emitJoinPayload)
             .def("receiveSignalingData", &NativeInstance::receiveSignalingData)
             .def("setSignalingDataEmittedCallback", &NativeInstance::setSignalingDataEmittedCallback)
-            .def("setStateUpdatedCallback", &NativeInstance::setStateUpdatedCallback);
+            .def("setStateUpdatedCallback", &NativeInstance::setStateUpdatedCallback)
+            .def("setRequestedVideoAspect", &NativeInstance::setRequestedVideoAspect);
 }
