@@ -87,7 +87,7 @@ public:
     void setStateUpdatedCallback(const std::function<void(int)> &f);
     void startCallP2P(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::shared_ptr<P2PFileAudioDeviceDescriptor> fileAudioDeviceDescriptor);
     void startCallP2PRaw(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::shared_ptr<P2PRawAudioDeviceDescriptor> rawAudioDeviceDescriptor);
-    void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
+    void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height, bool rotate);
 
     void setP2PVideoRecord(std::string file);
 

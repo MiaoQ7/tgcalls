@@ -761,11 +761,11 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
   instanceHolder->nativeInstance->setMuteMicrophone(false);
 }
 
-void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height) {
+void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height, bool rotate) {
   _videoCapture = tgcalls::VideoCaptureInterface::Create(
       tgcalls::StaticThreads::getThreads(),
       PythonVideoTrackSource::createPtr(
-          std::make_unique<PythonSource>(std::move(getNextFrameBuffer), fps, width, height),fps),
+          std::make_unique<PythonSource>(std::move(getNextFrameBuffer), fps, width, height, rotate),fps),
       "python_video_track_source"
   );
 

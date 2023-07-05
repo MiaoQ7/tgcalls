@@ -11,6 +11,7 @@
 
 class PythonSource {
 public:
+  PythonSource(std::function<std::string()>, float, int, int, bool);
   PythonSource(std::function<std::string()>, float, int, int);
   ~PythonSource() = default;
 
@@ -21,6 +22,7 @@ private:
   float _fps;
   int _width;
   int _height;
+  bool _rotate = false;
 
   int _required_width = 1280;
   int _required_height = 720;
