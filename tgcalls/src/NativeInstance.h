@@ -12,6 +12,7 @@
 #include "WrappedAudioDeviceModuleImpl.h"
 
 #include "video/PythonSource.h"
+#include "video/PythonSourceYUV.h"
 #include "video/PythonRecord.h"
 #include "video/PythonVideoTrackSource.h"
 
@@ -96,11 +97,13 @@ public:
     void startCallP2PRaw(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::shared_ptr<P2PRawAudioDeviceDescriptor> rawAudioDeviceDescriptor);
     void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height, bool rotate);
 
+    void setP2PVideoCaptureYUV(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
+
     void setP2PVideoRecord(std::string file);
 
     void setRequestedVideoAspect(float aspect);
 
-    void cacheVideo(std::function<std::string()> getNextFrameBuffer, int width, int height, bool rotate, std::string cacheFilePath);
+    static void cacheVideo(std::function<std::string()> getNextFrameBuffer, int width, int height, bool rotate, std::string cacheFilePath);
 private:
     void createInstanceHolder(
         std::function<rtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)>,

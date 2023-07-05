@@ -161,11 +161,14 @@ PYBIND11_MODULE(tgcalls, m) {
             .def("setConnectionMode", &NativeInstance::setConnectionMode)
             .def("setVideoCapture", &NativeInstance::setVideoCapture)
             .def("setP2PVideoCapture", &NativeInstance::setP2PVideoCapture)
+            .def("setP2PVideoCaptureYUV", &NativeInstance::setP2PVideoCaptureYUV)
             .def("setP2PVideoRecord", &NativeInstance::setP2PVideoRecord)
             .def("emitJoinPayload", &NativeInstance::emitJoinPayload)
             .def("receiveSignalingData", &NativeInstance::receiveSignalingData)
             .def("setSignalingDataEmittedCallback", &NativeInstance::setSignalingDataEmittedCallback)
             .def("setStateUpdatedCallback", &NativeInstance::setStateUpdatedCallback)
             .def("setRequestedVideoAspect", &NativeInstance::setRequestedVideoAspect)
-            .def("cacheVideo", &NativeInstance::cacheVideo);
+            .def_static("cacheVideo", &NativeInstance::cacheVideo);
+    
+    // m.def("cacheVideo", &NativeInstance::cacheVideo);
 }

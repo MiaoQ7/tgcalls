@@ -7,23 +7,25 @@
 #include <api/video/video_frame.h>
 #include <api/video/i420_buffer.h>
 #include <libyuv.h>
+#include "PythonSource.h"
 
 
-class PythonSource {
+class PythonSourceYUV : public PythonSource {
 public:
-  PythonSource(std::function<std::string()>, float, int, int, bool);
-  PythonSource(std::function<std::string()>, float, int, int);
-  ~PythonSource() = default;
+  PythonSourceYUV(std::function<std::string()>, float, int, int);
+  ~PythonSourceYUV() {
+    if (_fp) {
+      fclose(_fp);
+    }
+  };
 
-  virtual webrtc::VideoFrame next_frame();
+  webrtc::VideoFrame next_frame();
 
 private:
   std::function<std::string()> _getNextFrameBuffer = nullptr;
   float _fps;
   int _width;
   int _height;
-  bool _rotate = false;
-
-  int _required_width = 1280;
-  int _required_height = 720;
+  FILE* _fp;
+  rtc::scoped_refptr<webrtc::I420Buffer> black_buffer = nullptr;
 };

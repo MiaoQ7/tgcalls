@@ -772,6 +772,18 @@ void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFram
   instanceHolder->nativeInstance->setVideoCapture(std::move(_videoCapture));
 }
 
+void NativeInstance::setP2PVideoCaptureYUV(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height)
+{
+  _videoCapture = tgcalls::VideoCaptureInterface::Create(
+      tgcalls::StaticThreads::getThreads(),
+      PythonVideoTrackSource::createPtr(
+          std::make_unique<PythonSourceYUV>(std::move(getNextFrameBuffer), fps, width, height),fps),
+      "python_video_track_source"
+  );
+
+  instanceHolder->nativeInstance->setVideoCapture(std::move(_videoCapture));
+}
+
 void NativeInstance::setP2PVideoRecord(std::string file) {
   // printf("setP2PVideoRecord 1");
   if (instanceHolder == nullptr || instanceHolder->nativeInstance == nullptr) {
@@ -798,10 +810,17 @@ void NativeInstance::cacheVideo(std::function<std::string()> getNextFrameBuffer,
   while (true) {
     step++;
     auto frame = new std::string{getNextFrameBuffer()};
-    if (frame->empty()) {
+
+    if (frame->compare("#end") == 0) {
+      delete frame;
       fflush(_fp);
       fclose(_fp);
       break;
+    }
+
+    if (frame->empty()) {
+      delete frame;
+      continue;
     }
 
     rtc::scoped_refptr<webrtc::I420Buffer> buffer = webrtc::I420Buffer::Create(width, height);

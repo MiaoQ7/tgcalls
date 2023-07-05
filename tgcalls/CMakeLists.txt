@@ -33,6 +33,8 @@ list(APPEND SOURCES
     ${src_loc}/video/PythonSource.cpp
     ${src_loc}/video/PythonRecord.h
     ${src_loc}/video/PythonRecord.cpp
+    ${src_loc}/video/PythonSourceYUV.h
+    ${src_loc}/video/PythonSourceYUV.cpp
 )
 
 pybind11_add_module(tgcalls ${SOURCES})
