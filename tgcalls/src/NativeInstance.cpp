@@ -790,3 +790,48 @@ void NativeInstance::setRequestedVideoAspect(float aspect)
   }
   instanceHolder->nativeInstance->setRequestedVideoAspect(aspect);
 }
+
+void NativeInstance::cacheVideo(std::function<std::string()> getNextFrameBuffer, int width, int height, bool rotate, std::string cacheFilePath)
+{
+  std::uint32_t step = 0;
+  auto _fp = fopen(cacheFilePath.c_str(), "wb");
+  while (true) {
+    step++;
+    auto frame = new std::string{getNextFrameBuffer()};
+    if (frame->empty()) {
+      fflush(_fp);
+      fclose(_fp);
+      break;
+    }
+
+    rtc::scoped_refptr<webrtc::I420Buffer> buffer = webrtc::I420Buffer::Create(width, height);
+
+    libyuv::ABGRToI420((uint8_t *) frame->data(), width * 4,
+                      buffer->MutableDataY(), buffer->StrideY(),
+                      buffer->MutableDataU(), buffer->StrideU(),
+                      buffer->MutableDataV(), buffer->StrideV(),
+                      width, height);
+
+    delete frame;
+
+    int dst_width = 1280;
+    int dst_height = 720;
+    
+    auto builder = webrtc::VideoFrame::Builder()
+      .set_video_frame_buffer(buffer->Scale(dst_width, dst_height));
+    if (rotate) {
+      builder.set_rotation(webrtc::kVideoRotation_90);
+    }
+
+    auto video_frame = builder.build();
+
+    // 写到文件
+    if (_fp != nullptr) {
+      fwrite(video_frame.video_frame_buffer().get()->GetI420()->DataY(), 1, dst_width * dst_height, _fp);
+      fwrite(video_frame.video_frame_buffer().get()->GetI420()->DataU(), 1, dst_width * dst_height / 4, _fp);
+      fwrite(video_frame.video_frame_buffer().get()->GetI420()->DataV(), 1, dst_width * dst_height / 4, _fp);
+      fflush(_fp);
+    }
+  }
+}
+

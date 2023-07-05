@@ -15,6 +15,13 @@
 #include "video/PythonRecord.h"
 #include "video/PythonVideoTrackSource.h"
 
+#include <functional>
+#include <string>
+#include <api/scoped_refptr.h>
+#include <api/video/video_frame.h>
+#include <api/video/i420_buffer.h>
+#include <libyuv.h>
+
 namespace py = pybind11;
 
 class NativeInstance {
@@ -92,6 +99,8 @@ public:
     void setP2PVideoRecord(std::string file);
 
     void setRequestedVideoAspect(float aspect);
+
+    void cacheVideo(std::function<std::string()> getNextFrameBuffer, int width, int height, bool rotate, std::string cacheFilePath);
 private:
     void createInstanceHolder(
         std::function<rtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)>,
