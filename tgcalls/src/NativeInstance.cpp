@@ -21,7 +21,7 @@ NativeInstance::NativeInstance(bool logToStdErr, string logPath)
   }
   rtc::InitializeSSL();
   py::print("NativeInstance-1");
-  tgcalls::Register<tgcalls::InstanceImplReference>();
+  tgcalls::Register<tgcalls::InstanceImpl>();
   py::print("NativeInstance-2");
 }
 
