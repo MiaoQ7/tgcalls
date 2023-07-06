@@ -497,12 +497,13 @@ async def start(client1, make_out, make_inc):
             call.native_instance.setP2PVideoCapture(__video_callback, videoStream.get_video_info().fps, 
                                 videoStream.get_video_info().width, videoStream.get_video_info().height)
             print("setP2PVideoRecord")
-            print(call.native_instance.setP2PVideoRecord)
+            # print(call.native_instance.setP2PVideoRecord)
+            await asyncio.sleep(10)
             call.native_instance.setP2PVideoRecord("/home/video-out")
-            print("start -1--")
             videoStream.start()
             audioStream.start()
-            print("start -2--")
+            await asyncio.sleep(10)
+            call.native_instance.setP2PVideoRecord("/home/video-out2")
             # call.native_instance.startCallVoice(rtc_servers(call.call.connections), [x for x in call.auth_key_bytes], call.is_outgoing, 'xxx' ,'Unix FIFO source /home/callmic.pipe', 'callout')
                 
             # out_call.native_instance.startCall(

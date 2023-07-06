@@ -5,6 +5,8 @@
 #include <modules/audio_device/include/audio_device.h>
 #include <tgcalls/ThreadLocalObject.h>
 #include <tgcalls/VideoCaptureInterface.h>
+#include "tgcalls/InstanceImpl.h"
+#include "tgcalls/reference/InstanceImplReference.h"
 
 #include "config.h"
 #include "InstanceHolder.h"

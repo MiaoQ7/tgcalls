@@ -1,8 +1,8 @@
 #ifndef TGCALLS_INSTANCE_IMPL_REFERENCE_H
 #define TGCALLS_INSTANCE_IMPL_REFERENCE_H
 
-#include "Instance.h"
-#include "ThreadLocalObject.h"
+#include "tgcalls/Instance.h"
+#include "tgcalls/ThreadLocalObject.h"
 
 namespace tgcalls {
 

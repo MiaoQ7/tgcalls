@@ -989,6 +989,7 @@ int InstanceImplReference::GetConnectionMaxLayer() {
 std::vector<std::string> InstanceImplReference::GetVersions() {
     std::vector<std::string> result;
     result.push_back("2.8.8");
+    result.push_back("3.0.0");
     return result;
 }
 
@@ -1027,6 +1028,13 @@ void InstanceImplReference::stop(std::function<void(FinalState)> completion) {
 template <>
 bool Register<InstanceImplReference>() {
 	return Meta::RegisterOne<InstanceImplReference>();
+}
+
+void InstanceImplReference::sendVideoDeviceUpdated()
+{
+    internal_->perform(RTC_FROM_HERE, [](InstanceImplReferenceInternal *internal) {
+        internal->sendVideoDeviceUpdated();
+    });
 }
 
 } // namespace tgcalls

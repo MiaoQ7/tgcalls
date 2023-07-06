@@ -19,6 +19,9 @@ namespace rtc {
 
 class WrappedAudioDeviceModuleImpl : public webrtc::AudioDeviceModule {
 public:
+  int32_t Init() {
+    return 0;
+  }
   static rtc::scoped_refptr<webrtc::AudioDeviceModuleImpl> Create(
     AudioLayer,
     webrtc::TaskQueueFactory *,

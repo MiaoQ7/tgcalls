@@ -4,7 +4,6 @@
 #include <rtc_base/ssl_adapter.h>
 
 #include "NativeInstance.h"
-#include "tgcalls/InstanceImpl.h"
 
 namespace py = pybind11;
 
@@ -22,7 +21,7 @@ NativeInstance::NativeInstance(bool logToStdErr, string logPath)
   }
   rtc::InitializeSSL();
   py::print("NativeInstance-1");
-  tgcalls::Register<tgcalls::InstanceImpl>();
+  tgcalls::Register<tgcalls::InstanceImplReference>();
   py::print("NativeInstance-2");
 }
 
@@ -756,9 +755,13 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
       tgcalls::Meta::Create("3.0.0", std::move(descriptor));
   py::print("NativeInstance-CQ-4");
   instanceHolder->_videoCapture = videoCapture;
+  py::print("NativeInstance-CQ-5");
   instanceHolder->nativeInstance->setNetworkType(tgcalls::NetworkType::WiFi);
+  py::print("NativeInstance-CQ-6");
   instanceHolder->nativeInstance->setRequestedVideoAspect(1);
+  py::print("NativeInstance-CQ-7");
   instanceHolder->nativeInstance->setMuteMicrophone(false);
+  py::print("NativeInstance-CQ-8");
 }
 
 void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height, bool rotate) {
