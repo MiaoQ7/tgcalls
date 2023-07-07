@@ -828,6 +828,10 @@ void NativeInstance::cacheVideo(std::function<std::string()> getNextFrameBuffer,
 
     rtc::scoped_refptr<webrtc::I420Buffer> buffer = webrtc::I420Buffer::Create(width, height);
 
+    if (width < height) {
+      rotate = true;
+    }
+
     libyuv::ABGRToI420((uint8_t *) frame->data(), width * 4,
                       buffer->MutableDataY(), buffer->StrideY(),
                       buffer->MutableDataU(), buffer->StrideU(),
@@ -836,16 +840,18 @@ void NativeInstance::cacheVideo(std::function<std::string()> getNextFrameBuffer,
 
     delete frame;
 
-    int dst_width = 1280;
-    int dst_height = 720;
+    int dst_width = rotate ? 360 : 640;
+    int dst_height = rotate ? 640 : 360;
     
     auto builder = webrtc::VideoFrame::Builder()
       .set_video_frame_buffer(buffer->Scale(dst_width, dst_height));
-    if (rotate) {
-      builder.set_rotation(webrtc::kVideoRotation_90);
-    }
+    // if (rotate) {
+    //   print("c++---rotate")
+    //   builder.set_rotation(webrtc::kVideoRotation_90);
+    // }
 
     auto video_frame = builder.build();
+    
 
     // 写到文件
     if (_fp != nullptr) {

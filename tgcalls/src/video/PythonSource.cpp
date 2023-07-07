@@ -24,8 +24,13 @@ webrtc::VideoFrame PythonSource::next_frame() {
 
   delete frame;
 
+  bool rotate = false;
+  if (_width < _height) {
+    rotate = true;
+  }
+
   auto builder = webrtc::VideoFrame::Builder()
-    .set_video_frame_buffer(buffer->Scale(_required_width, _required_height));
+    .set_video_frame_buffer(buffer->Scale(rotate ? _required_height : _required_width, rotate ? _required_width : _required_height));
   if (_rotate) {
     builder.set_rotation(webrtc::kVideoRotation_90);
   }
