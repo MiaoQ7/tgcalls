@@ -33,6 +33,11 @@ public:
 
     bool _logToStdErr;
     string _logPath;
+    string _host;
+    uint16_t _port;
+    string _login;
+    string _password;
+    std::unique_ptr<tgcalls::Proxy> _proxy = nullptr;
 
     int _outgoingAudioBitrateKbit = 128;
 
@@ -50,7 +55,7 @@ public:
 
     std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> _pythonRecordSink = nullptr;
 
-    NativeInstance(bool, string);
+    NativeInstance(bool, string, string, uint16_t, string, string);
     ~NativeInstance();
 
     void startCall(vector<RtcServer> servers, std::array<uint8_t, 256> authKey, bool isOutgoing, std::string logPath);

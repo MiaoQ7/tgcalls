@@ -89,6 +89,7 @@ std::unique_ptr<VideoCapturerInterface> AndroidInterface::makeVideoCapturer(rtc:
 
 
 std::unique_ptr<PlatformInterface> CreatePlatformInterface() {
+    printf("AndroidInterface CreatePlatformInterface\n");
 	return std::make_unique<AndroidInterface>();
 }
 

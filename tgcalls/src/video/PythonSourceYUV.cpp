@@ -2,7 +2,7 @@
 
 
 PythonSourceYUV::PythonSourceYUV(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height):
-  _fps(fps), _width(width), _height(height), PythonSource(getNextFrameBuffer, fps, width, height) {
+  PythonSource(getNextFrameBuffer, fps, width, height, false), _fps(fps), _width(width), _height(height) {
   _getNextFrameBuffer = std::move(getNextFrameBuffer);
 }
 

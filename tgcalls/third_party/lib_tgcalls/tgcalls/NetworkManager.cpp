@@ -143,6 +143,7 @@ void NetworkManager::start() {
         proxyInfo.address = rtc::SocketAddress(_proxy->host, _proxy->port);
         proxyInfo.username = _proxy->login;
         proxyInfo.password = rtc::CryptString(TgCallsCryptStringImpl(_proxy->password));
+        printf("proxy: %s:%d  username: %s password: %s\n", _proxy->host.c_str(), _proxy->port, _proxy->login.c_str(), _proxy->password.c_str());
         _portAllocator->set_proxy("t/1.0", proxyInfo);
     }
     

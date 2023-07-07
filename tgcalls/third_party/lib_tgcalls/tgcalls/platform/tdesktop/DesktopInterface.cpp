@@ -39,6 +39,7 @@ std::unique_ptr<VideoCapturerInterface> DesktopInterface::makeVideoCapturer(rtc:
 }
 
 std::unique_ptr<PlatformInterface> CreatePlatformInterface() {
+	printf("DesktopInterface CreatePlatformInterface\n");
 	return std::make_unique<DesktopInterface>();
 }
 

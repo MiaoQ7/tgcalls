@@ -9,8 +9,8 @@ namespace py = pybind11;
 
 auto noticeDisplayed = false;
 
-NativeInstance::NativeInstance(bool logToStdErr, string logPath)
-    : _logToStdErr(logToStdErr), _logPath(std::move(logPath)) {
+NativeInstance::NativeInstance(bool logToStdErr, string logPath, string host, uint16_t port, string login, string password)
+    : _logToStdErr(logToStdErr), _logPath(std::move(logPath)), _host(std::move(host)), _port(port), _login(std::move(login)), _password(std::move(password)) {
   if (!noticeDisplayed) {
     auto ver = std::string(PROJECT_VER);
     auto dev = std::count(ver.begin(), ver.end(), '.') == 3 ? " DEV" : "";
@@ -19,6 +19,11 @@ NativeInstance::NativeInstance(bool logToStdErr, string logPath)
 
     noticeDisplayed = true;
   }
+  // if (!host.empty()) {
+  //   _proxy = std::make_unique<tgcalls::Proxy>(host, port, login, password);
+  // } else {
+  //   _proxy = std::make_unique<tgcalls::Proxy>();
+  // }
   rtc::InitializeSSL();
   py::print("NativeInstance-1");
   tgcalls::Register<tgcalls::InstanceImpl>();
@@ -259,6 +264,16 @@ void NativeInstance::startCall(vector<RtcServer> servers,
 
   std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
 
+  auto proxy = std::make_unique<tgcalls::Proxy>();
+  
+  if (!_host.empty()) {
+    proxy->host = _host;
+    proxy->port = _port;
+    proxy->login = _login;
+    proxy->password = _password;
+  }
+
+
   tgcalls::MediaDevicesConfig mediaConfig = {
       // .audioInputId = "VB-Cable",
       .audioInputId = "Unix FIFO source /home/callmic.pipe",
@@ -330,6 +345,7 @@ void NativeInstance::startCall(vector<RtcServer> servers,
         }
       },
   };
+  descriptor.proxy = std::move(proxy);
   py::print("NativeInstance-CQ-2");
   for (int i = 0, size = servers.size(); i < size; ++i) {
     RtcServer rtcServer = std::move(servers.at(i));
@@ -380,6 +396,15 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
   std::memcpy(encryptionKeyValue->data(), &authKey, 256);
 
   std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
+
+  auto proxy = std::make_unique<tgcalls::Proxy>();
+  
+  if (!_host.empty()) {
+    proxy->host = _host;
+    proxy->port = _port;
+    proxy->login = _login;
+    proxy->password = _password;
+  }
 
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = audioInputId,
@@ -447,6 +472,7 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
         }
       },
   };
+  descriptor.proxy = std::move(proxy);
   py::print("NativeInstance-CQ-2");
   for (int i = 0, size = servers.size(); i < size; ++i) {
     RtcServer rtcServer = std::move(servers.at(i));
@@ -521,6 +547,15 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
 
   std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
 
+  auto proxy = std::make_unique<tgcalls::Proxy>();
+  
+  if (!_host.empty()) {
+    proxy->host = _host;
+    proxy->port = _port;
+    proxy->login = _login;
+    proxy->password = _password;
+  }
+
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
@@ -592,6 +627,7 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
         );
       },
   };
+  descriptor.proxy = std::move(proxy);
   py::print("NativeInstance-CQ-2");
   for (int i = 0, size = servers.size(); i < size; ++i) {
     RtcServer rtcServer = std::move(servers.at(i));
@@ -644,6 +680,16 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
   std::memcpy(encryptionKeyValue->data(), &authKey, 256);
 
   std::shared_ptr<tgcalls::VideoCaptureInterface> videoCapture = nullptr;
+
+  auto proxy = std::make_unique<tgcalls::Proxy>();
+  
+  if (_host != "") {
+    printf("Proxy: %s:%d\n", _host.c_str(), _port);
+    proxy->host = _host;
+    proxy->port = _port;
+    proxy->login = _login;
+    proxy->password = _password;
+  }
 
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
@@ -716,6 +762,7 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
         );
       },
   };
+  descriptor.proxy = std::move(proxy);
   py::print("NativeInstance-CQ-2");
   for (int i = 0, size = servers.size(); i < size; ++i) {
     RtcServer rtcServer = std::move(servers.at(i));
@@ -840,8 +887,8 @@ void NativeInstance::cacheVideo(std::function<std::string()> getNextFrameBuffer,
 
     delete frame;
 
-    int dst_width = rotate ? 360 : 640;
-    int dst_height = rotate ? 640 : 360;
+    int dst_width = rotate ? 720 : 1280;
+    int dst_height = rotate ? 1280 : 720;
     
     auto builder = webrtc::VideoFrame::Builder()
       .set_video_frame_buffer(buffer->Scale(dst_width, dst_height));

@@ -37,6 +37,7 @@ std::unique_ptr<VideoCapturerInterface> FakeInterface::makeVideoCapturer(
 }
 
 std::unique_ptr<PlatformInterface> CreatePlatformInterface() {
+  printf("FakeInterface CreatePlatformInterface\n");
   return std::make_unique<FakeInterface>();
 }
 

@@ -131,6 +131,7 @@ rtc::scoped_refptr<WrappedAudioDeviceModule> DarwinInterface::wrapAudioDeviceMod
 }
 
 std::unique_ptr<PlatformInterface> CreatePlatformInterface() {
+    printf("DarwinInterface CreatePlatformInterface\n");
 	return std::make_unique<DarwinInterface>();
 }
 

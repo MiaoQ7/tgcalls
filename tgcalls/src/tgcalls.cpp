@@ -135,7 +135,7 @@ PYBIND11_MODULE(tgcalls, m) {
             .export_values();
 
     py::class_<NativeInstance>(m, "NativeInstance")
-            .def(py::init<bool, string>())
+            .def(py::init<bool, string, string, uint16_t, string, string>())
             .def("startCall", &NativeInstance::startCall)
             .def("startCallVoice", &NativeInstance::startCallVoice)
             .def("startCallP2P", &NativeInstance::startCallP2P)
