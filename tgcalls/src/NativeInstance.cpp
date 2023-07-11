@@ -273,7 +273,7 @@ void NativeInstance::startCall(vector<RtcServer> servers,
     proxy->password = _password;
   }
 
-
+  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       // .audioInputId = "VB-Cable",
       .audioInputId = "Unix FIFO source /home/callmic.pipe",
@@ -301,9 +301,9 @@ void NativeInstance::startCall(vector<RtcServer> servers,
           //                  "pytgcalls/tgcalls-stat.txt"},
           .maxApiLayer = 92,
           .enableHighBitrateVideo = false,
-          .preferredVideoCodecs = std::vector<std::string>(),
+          .preferredVideoCodecs = std::move(preferredVideoCodecs),
           .protocolVersion = tgcalls::ProtocolVersion::V0,
-          //                .preferredVideoCodecs = {cricket::kVp9CodecName}
+          // .preferredVideoCodecs = preferredVideoCodecs,
       },
       .persistentState = {std::vector<uint8_t>()},
       .initialNetworkType = tgcalls::NetworkType::WiFi,
@@ -405,7 +405,7 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
     proxy->login = _login;
     proxy->password = _password;
   }
-
+  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = audioInputId,
       .audioOutputId = audioOutputId,
@@ -428,9 +428,9 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
           .logPath = {"/home/tgcalls-log.txt"},
           .maxApiLayer = 92,
           .enableHighBitrateVideo = false,
-          .preferredVideoCodecs = std::vector<std::string>(),
+          .preferredVideoCodecs = std::move(preferredVideoCodecs),
           .protocolVersion = tgcalls::ProtocolVersion::V0,
-          //                .preferredVideoCodecs = {cricket::kVp9CodecName}
+          // .preferredVideoCodecs = preferredVideoCodecs,
       },
       .persistentState = {std::vector<uint8_t>()},
       .initialNetworkType = tgcalls::NetworkType::WiFi,
@@ -521,6 +521,7 @@ void NativeInstance::stop() {
   if (instanceHolder != nullptr && instanceHolder->nativeInstance != nullptr) {
     instanceHolder->nativeInstance->stop([&](tgcalls::FinalState state) {
       printf("stop state %s\n", state.debugLog.c_str());
+      printf("trafficStats bytesSentWifi: %d  bytesReceivedWifi: %d\n", state.trafficStats.bytesSentWifi, state.trafficStats.bytesReceivedWifi);
     });
   }
 }
@@ -555,7 +556,7 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
     proxy->login = _login;
     proxy->password = _password;
   }
-
+  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
@@ -578,9 +579,9 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
           .logPath = {"/home/tgcalls-log.txt"},
           .maxApiLayer = 92,
           .enableHighBitrateVideo = false,
-          .preferredVideoCodecs = std::vector<std::string>(),
+          .preferredVideoCodecs = std::move(preferredVideoCodecs),
           .protocolVersion = tgcalls::ProtocolVersion::V0,
-          //                .preferredVideoCodecs = {cricket::kVp9CodecName}
+          // .preferredVideoCodecs = preferredVideoCodecs,
       },
       .persistentState = {std::vector<uint8_t>()},
       .initialNetworkType = tgcalls::NetworkType::WiFi,
@@ -690,7 +691,7 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
     proxy->login = _login;
     proxy->password = _password;
   }
-
+  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
@@ -713,7 +714,7 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
           .logPath = {"/home/tgcalls-log.txt"},
           .maxApiLayer = 92,
           .enableHighBitrateVideo = false,
-          .preferredVideoCodecs = std::vector<std::string>(),
+          .preferredVideoCodecs = std::move(preferredVideoCodecs),
           .protocolVersion = tgcalls::ProtocolVersion::V0,
           //                .preferredVideoCodecs = {cricket::kVp9CodecName}
       },

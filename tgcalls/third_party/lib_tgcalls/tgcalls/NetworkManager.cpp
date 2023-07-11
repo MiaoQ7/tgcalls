@@ -226,14 +226,19 @@ void NetworkManager::receiveSignalingMessage(DecryptedMessage &&message) {
 }
 
 uint32_t NetworkManager::sendMessage(const Message &message) {
+    
 	if (const auto prepared = _transport.prepareForSending(message)) {
 		rtc::PacketOptions packetOptions;
 		auto sent = _transportChannel->SendPacket((const char *)prepared->bytes.data(), prepared->bytes.size(), packetOptions, 0);
         addTrafficStats(prepared->bytes.size(), false);
         if (sent >= 0) {
-            printf("send message: %s\n", _transportChannel->best_connection()->ToString().c_str());
-            printf("send message: local %s\n", _transportChannel->best_connection()->local_candidate().ToString().c_str());
-            printf("send message: remote %s\n", _transportChannel->best_connection()->remote_candidate().ToString().c_str());
+            // if (const auto msg = absl::get_if<VideoDataMessage>(&message.data)) {
+            //     printf("send message: %d %d %d %d\n", prepared->bytes.data()[0], prepared->bytes.data()[1], prepared->bytes.data()[2], prepared->bytes.data()[3]);
+            // }
+            
+            // printf("send message: %s\n", _transportChannel->best_connection()->ToString().c_str());
+            // printf("send message: local %s\n", _transportChannel->best_connection()->local_candidate().ToString().c_str());
+            // printf("send message: remote %s\n", _transportChannel->best_connection()->remote_candidate().ToString().c_str());
         }
 		return prepared->counter;
 	}
