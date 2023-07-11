@@ -220,6 +220,7 @@ void NetworkManager::receiveSignalingMessage(DecryptedMessage &&message) {
     }
 
 	for (const auto &candidate : list->candidates) {
+        // printf("candidate: %s\n", candidate.ToString().c_str());
 		_transportChannel->AddRemoteCandidate(candidate);
 	}
 }
@@ -227,8 +228,13 @@ void NetworkManager::receiveSignalingMessage(DecryptedMessage &&message) {
 uint32_t NetworkManager::sendMessage(const Message &message) {
 	if (const auto prepared = _transport.prepareForSending(message)) {
 		rtc::PacketOptions packetOptions;
-		_transportChannel->SendPacket((const char *)prepared->bytes.data(), prepared->bytes.size(), packetOptions, 0);
+		auto sent = _transportChannel->SendPacket((const char *)prepared->bytes.data(), prepared->bytes.size(), packetOptions, 0);
         addTrafficStats(prepared->bytes.size(), false);
+        if (sent >= 0) {
+            printf("send message: %s\n", _transportChannel->best_connection()->ToString().c_str());
+            printf("send message: local %s\n", _transportChannel->best_connection()->local_candidate().ToString().c_str());
+            printf("send message: remote %s\n", _transportChannel->best_connection()->remote_candidate().ToString().c_str());
+        }
 		return prepared->counter;
 	}
 	return 0;

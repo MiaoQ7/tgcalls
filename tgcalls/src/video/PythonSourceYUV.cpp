@@ -12,14 +12,14 @@ webrtc::VideoFrame PythonSourceYUV::next_frame() {
   if (((uint8_t *) frame->data())[0] == 0) {
     if (black_buffer == nullptr) {
       black_buffer = webrtc::I420Buffer::Create(_width, _height);
-      libyuv::ConvertToI420((uint8_t *) frame->data(), frame->size(),
-        black_buffer->MutableDataY(), black_buffer->StrideY(),
-        black_buffer->MutableDataU(), black_buffer->StrideU(),
-        black_buffer->MutableDataV(), black_buffer->StrideV(),
-        0, 0,
-        _width, _height, 
-        _width, _height,
-        libyuv::kRotate0, libyuv::FOURCC_ABGR);
+      // libyuv::ConvertToI420((uint8_t *) frame->data(), frame->size(),
+      //   black_buffer->MutableDataY(), black_buffer->StrideY(),
+      //   black_buffer->MutableDataU(), black_buffer->StrideU(),
+      //   black_buffer->MutableDataV(), black_buffer->StrideV(),
+      //   0, 0,
+      //   _width, _height, 
+      //   _width, _height,
+      //   libyuv::kRotate0, libyuv::FOURCC_ABGR);
     }
 
     delete frame;
@@ -32,14 +32,14 @@ webrtc::VideoFrame PythonSourceYUV::next_frame() {
 
   rtc::scoped_refptr<webrtc::I420Buffer> buffer = webrtc::I420Buffer::Create(_width, _height);
 
-  libyuv::ConvertToI420((uint8_t *) frame->data(), frame->size(),
-                     buffer->MutableDataY(), buffer->StrideY(),
-                     buffer->MutableDataU(), buffer->StrideU(),
-                     buffer->MutableDataV(), buffer->StrideV(),
-                     0, 0,
-                     _width, _height, 
-                     _width, _height,
-                     libyuv::kRotate0, libyuv::FOURCC_I420);
+  // libyuv::ConvertToI420((uint8_t *) frame->data(), frame->size(),
+  //                    buffer->MutableDataY(), buffer->StrideY(),
+  //                    buffer->MutableDataU(), buffer->StrideU(),
+  //                    buffer->MutableDataV(), buffer->StrideV(),
+  //                    0, 0,
+  //                    _width, _height, 
+  //                    _width, _height,
+  //                    libyuv::kRotate0, libyuv::FOURCC_I420);
 
   delete frame;
 
