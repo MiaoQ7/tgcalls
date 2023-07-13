@@ -8,6 +8,8 @@
 #include "Message.h"
 #include "platform/PlatformInterface.h"
 #include "StaticThreads.h"
+#include "video/VideoDecoderFactory.h"
+#include "video/VideoEncoderFactory.h"
 
 #include "api/audio_codecs/audio_decoder_factory_template.h"
 #include "api/audio_codecs/audio_encoder_factory_template.h"
@@ -301,6 +303,8 @@ _enableHighBitrateVideo(enableHighBitrateVideo) {
 
 	mediaDeps.video_encoder_factory = PlatformInterface::SharedInstance()->makeVideoEncoderFactory();
 	mediaDeps.video_decoder_factory = PlatformInterface::SharedInstance()->makeVideoDecoderFactory();
+    // mediaDeps.video_encoder_factory = std::make_unique<VideoEncoderFactory>();
+    // mediaDeps.video_decoder_factory = std::make_unique<VideoDecoderFactory>();
 
 	_myVideoFormats = ComposeSupportedFormats(
 		mediaDeps.video_encoder_factory->GetSupportedFormats(),

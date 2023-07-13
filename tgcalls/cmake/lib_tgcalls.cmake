@@ -153,6 +153,13 @@ PRIVATE
     # third-party
     third-party/json11.cpp
     third-party/json11.hpp
+
+    # video
+    video/EncodedVideoFrameBuffer.h
+    video/NullDecoder.h
+    video/NullEncoder.h
+    video/VideoDecoderFactory.h
+    video/VideoEncoderFactory.h
 )
 
 target_link_libraries(lib_tgcalls

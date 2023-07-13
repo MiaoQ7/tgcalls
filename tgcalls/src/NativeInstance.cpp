@@ -273,7 +273,7 @@ void NativeInstance::startCall(vector<RtcServer> servers,
     proxy->password = _password;
   }
 
-  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
+  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       // .audioInputId = "VB-Cable",
       .audioInputId = "Unix FIFO source /home/callmic.pipe",
@@ -405,7 +405,7 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
     proxy->login = _login;
     proxy->password = _password;
   }
-  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
+  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = audioInputId,
       .audioOutputId = audioOutputId,
@@ -556,7 +556,7 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
     proxy->login = _login;
     proxy->password = _password;
   }
-  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
+  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
@@ -691,7 +691,7 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
     proxy->login = _login;
     proxy->password = _password;
   }
-  std::vector<std::string> preferredVideoCodecs = {cricket::kVp9CodecName};
+  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
