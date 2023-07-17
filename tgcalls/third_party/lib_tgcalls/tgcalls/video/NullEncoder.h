@@ -70,7 +70,7 @@ class NullEncoder : public webrtc::VideoEncoder {
 		encoded_image.ntp_time_ms_ = frame.ntp_time_ms();
 		encoded_image._frameType = frameType;
 
-		RTC_LOG(LS_VERBOSE) << "EncodedImage " << frame.id() << " " << encoded_image._frameType << " " <<  buffer->width() << "x" <<  buffer->height() << " " <<  buffer->GetI420()->StrideY();
+		RTC_LOG(LS_INFO) << "EncodedImage " << frame.id() << " " << encoded_image._frameType << " " <<  buffer->width() << "x" <<  buffer->height() << " " <<  buffer->GetI420()->StrideY();
 
 		// forward to callback
 		webrtc::CodecSpecificInfo codec_specific;
@@ -79,6 +79,7 @@ class NullEncoder : public webrtc::VideoEncoder {
         if (result.error == webrtc::EncodedImageCallback::Result::ERROR_SEND_FAILED) {
             RTC_LOG(LS_ERROR) << "Error in parsing EncodedImage" << encoded_image._frameType;
 		}
+		RTC_LOG(LS_INFO) << "EncodedImage WEBRTC_VIDEO_CODEC_OK";
 		return WEBRTC_VIDEO_CODEC_OK;
 	}
 
