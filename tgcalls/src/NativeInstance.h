@@ -15,6 +15,7 @@
 
 #include "video/PythonSource.h"
 #include "video/PythonSourceYUV.h"
+#include "video/PythonPureSource.h"
 #include "video/PythonRecord.h"
 #include "video/PythonVideoTrackSource.h"
 
