@@ -105,6 +105,7 @@ public:
     void setP2PVideoCapture(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height, bool rotate);
 
     void setP2PVideoCaptureYUV(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
+    void setP2PVideoCapturePure(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height);
 
     void setP2PVideoRecord(std::string file);
 
