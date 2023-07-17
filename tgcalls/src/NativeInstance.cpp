@@ -273,7 +273,7 @@ void NativeInstance::startCall(vector<RtcServer> servers,
     proxy->password = _password;
   }
 
-  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
+  std::vector<std::string> preferredVideoCodecs = {/*cricket::kH264CodecName*/};
   tgcalls::MediaDevicesConfig mediaConfig = {
       // .audioInputId = "VB-Cable",
       .audioInputId = "Unix FIFO source /home/callmic.pipe",
@@ -286,10 +286,10 @@ void NativeInstance::startCall(vector<RtcServer> servers,
   tgcalls::Descriptor descriptor = {
       .config =
       tgcalls::Config{
-          .initializationTimeout = 1000,
-          .receiveTimeout = 1000,
+          .initializationTimeout = 30,
+          .receiveTimeout = 10,
           .dataSaving = tgcalls::DataSaving::Never,
-          .enableP2P = false,
+          .enableP2P = true,
           .allowTCP = false,
           .enableStunMarking = true,
           .enableAEC = true,
@@ -405,7 +405,7 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
     proxy->login = _login;
     proxy->password = _password;
   }
-  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
+  std::vector<std::string> preferredVideoCodecs = {/*cricket::kH264CodecName*/};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = audioInputId,
       .audioOutputId = audioOutputId,
@@ -415,10 +415,10 @@ void NativeInstance::startCallVoice(vector<RtcServer> servers, std::array<uint8_
   tgcalls::Descriptor descriptor = {
       .config =
       tgcalls::Config{
-          .initializationTimeout = 1000,
-          .receiveTimeout = 1000,
+          .initializationTimeout = 30,
+          .receiveTimeout = 10,
           .dataSaving = tgcalls::DataSaving::Never,
-          .enableP2P = false,
+          .enableP2P = true,
           .allowTCP = false,
           .enableStunMarking = true,
           .enableAEC = true,
@@ -556,7 +556,7 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
     proxy->login = _login;
     proxy->password = _password;
   }
-  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
+  std::vector<std::string> preferredVideoCodecs = {/*cricket::kH264CodecName*/};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
@@ -566,10 +566,10 @@ void NativeInstance::startCallP2P(vector<RtcServer> servers, std::array<uint8_t,
   tgcalls::Descriptor descriptor = {
       .config =
       tgcalls::Config{
-          .initializationTimeout = 1000,
-          .receiveTimeout = 1000,
+          .initializationTimeout = 30,
+          .receiveTimeout = 10,
           .dataSaving = tgcalls::DataSaving::Never,
-          .enableP2P = false,
+          .enableP2P = true,
           .allowTCP = false,
           .enableStunMarking = true,
           .enableAEC = true,
@@ -691,7 +691,7 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
     proxy->login = _login;
     proxy->password = _password;
   }
-  std::vector<std::string> preferredVideoCodecs = {cricket::kH264CodecName};
+  std::vector<std::string> preferredVideoCodecs = {/*cricket::kH264CodecName*/};
   tgcalls::MediaDevicesConfig mediaConfig = {
       .audioInputId = "",
       .audioOutputId = "",
@@ -701,10 +701,10 @@ void NativeInstance::startCallP2PRaw(vector<RtcServer> servers, std::array<uint8
   tgcalls::Descriptor descriptor = {
       .config =
       tgcalls::Config{
-          .initializationTimeout = 1000,
-          .receiveTimeout = 1000,
+          .initializationTimeout = 30,
+          .receiveTimeout = 10,
           .dataSaving = tgcalls::DataSaving::Never,
-          .enableP2P = false,
+          .enableP2P = true,
           .allowTCP = false,
           .enableStunMarking = true,
           .enableAEC = true,
