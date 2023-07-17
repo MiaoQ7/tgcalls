@@ -7,6 +7,7 @@
 #include <api/video/video_frame.h>
 #include <api/video/i420_buffer.h>
 #include <libyuv.h>
+#include "PythonSource.h"
 
 
 class PythonPureSource : public PythonSource {
