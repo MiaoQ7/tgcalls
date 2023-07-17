@@ -4,11 +4,13 @@
 
 
 PythonPureSource::PythonPureSource(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height, bool rotate):
+  PythonSource(getNextFrameBuffer, fps, width, height, rotate),
   _fps(fps), _width(width), _height(height), _rotate(rotate) {
   _getNextFrameBuffer = std::move(getNextFrameBuffer);
 }
 
 PythonPureSource::PythonPureSource(std::function<std::string()> getNextFrameBuffer, float fps, int width, int height):
+  PythonSource(getNextFrameBuffer, fps, width, height, false),
   _fps(fps), _width(width), _height(height) {
   _getNextFrameBuffer = std::move(getNextFrameBuffer);
 }
