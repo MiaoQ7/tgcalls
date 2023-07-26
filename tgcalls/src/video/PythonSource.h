@@ -25,6 +25,6 @@ private:
   bool _rotate = false;
 
   // 360P  640x360  720P  1280x720
-  int _required_width = 320;
-  int _required_height = 180;
+  int _required_width = 1280;
+  int _required_height = 720;
 };
