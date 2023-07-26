@@ -28,7 +28,7 @@ public:
           webrtc::SleepMs(1000 / fps - delta_time_millis);
         }
       }
-      source.reset();
+      source.reset(nullptr);
     }).detach();
   }
 
