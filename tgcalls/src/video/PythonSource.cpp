@@ -14,7 +14,7 @@ PythonSource::PythonSource(std::function<std::string()> getNextFrameBuffer, floa
 }
 
 webrtc::VideoFrame PythonSource::next_frame() {
-  auto *frame = new std::string{_getNextFrameBuffer()};
+  std::unique_ptr<std::string> frame(new std::string{_getNextFrameBuffer()});
   // auto buffer = new rtc::RefCountedObject<tgcalls::EncodedVideoFrameBuffer>
   //   (_width, _height, webrtc::EncodedImageBuffer::Create((uint8_t *)frame->data(), frame->size()));
   
@@ -30,8 +30,6 @@ webrtc::VideoFrame PythonSource::next_frame() {
                      buffer->MutableDataU(), buffer->StrideU(),
                      buffer->MutableDataV(), buffer->StrideV(),
                      _width, _height);
-
-  delete frame;
 
   bool rotate = false;
   if (_width < _height) {
