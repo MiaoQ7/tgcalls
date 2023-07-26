@@ -101,8 +101,8 @@ PRIVATE
     platform/darwin/DarwinInterface.mm
     platform/darwin/DarwinVideoSource.h
     platform/darwin/DarwinVideoSource.mm
-    platform/darwin/DesktopCaptureSourceView.h
-    platform/darwin/DesktopCaptureSourceView.mm
+    platform/darwin/DesktopCaptureSourceViewMac.h
+    platform/darwin/DesktopCaptureSourceViewMac.mm
     platform/darwin/DesktopSharingCapturer.h
     platform/darwin/DesktopSharingCapturer.mm
     platform/darwin/GLVideoView.h
