@@ -8,7 +8,6 @@ public:
     // TODO rewrite this thread
     _data = std::make_shared<Data>();
     _data->is_running = true;
-
     std::thread([fps, data = _data, source = std::move(source)] {
       std::uint32_t step = 0;
       while (data->is_running) {
@@ -29,6 +28,7 @@ public:
           webrtc::SleepMs(1000 / fps - delta_time_millis);
         }
       }
+      source.reset();
     }).detach();
   }
 
@@ -67,6 +67,10 @@ public:
 
   explicit PythonVideoSourceImpl(std::unique_ptr<PythonSource> source, float fps) :
     VideoTrackSource(false), source_(std::move(source), fps) {
+  }
+
+  ~PythonVideoSourceImpl() {
+    printf("PythonVideoSourceImpl::~PythonVideoSourceImpl()\n");
   }
 
   PythonVideoSource GetSource_() {
