@@ -30,7 +30,12 @@ NativeInstance::NativeInstance(bool logToStdErr, string logPath, string host, ui
   py::print("NativeInstance-2");
 }
 
-NativeInstance::~NativeInstance() = default;
+NativeInstance::~NativeInstance() {
+  printf("NativeInstance::~NativeInstance()");
+  if (_videoCapture) {
+    _videoCapture.reset();
+  }
+}
 
 void NativeInstance::setupGroupCall(
     std::function<void(tgcalls::GroupJoinPayload)> &emitJoinPayloadCallback,
