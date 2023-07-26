@@ -8,7 +8,8 @@ public:
     // TODO rewrite this thread
     _data = std::make_shared<Data>();
     _data->is_running = true;
-    std::thread([fps, data = _data, source = std::move(source)] {
+    _source = std::move(source);
+    std::thread([fps, data = _data, source = std::move(_source)] {
       std::uint32_t step = 0;
       while (data->is_running) {
         step++;
@@ -28,13 +29,13 @@ public:
           webrtc::SleepMs(1000 / fps - delta_time_millis);
         }
       }
-      source.reset(nullptr);
     }).detach();
   }
 
   ~PythonVideoSource() {
     printf("PythonVideoSource::~PythonVideoSource\n");
     _data->is_running = false;
+    _source.reset();
   }
 
   // 视频接收接口
@@ -57,6 +58,7 @@ private:
     rtc::VideoBroadcaster broadcaster;
   };
   std::shared_ptr<Data> _data;
+  std::unique_ptr<PythonSource> _source;
 };
 
 class PythonVideoSourceImpl : public webrtc::VideoTrackSource {
