@@ -33,6 +33,7 @@ public:
   }
 
   ~PythonVideoSource() {
+    printf("PythonVideoSource::~PythonVideoSource\n");
     _data->is_running = false;
   }
 
