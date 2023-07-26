@@ -63,6 +63,14 @@ PRIVATE
     desktop_capturer/DesktopCaptureSourceManager.cpp
 
     # Group calls
+    group/AudioStreamingPart.cpp
+    group/AudioStreamingPart.h
+    group/AudioStreamingPartInternal.cpp
+    group/AudioStreamingPartInternal.h
+    group/AudioStreamingPartPersistentDecoder.cpp
+    group/AudioStreamingPartPersistentDecoder.h
+    group/AVIOContextImpl.cpp
+    group/AVIOContextImpl.h
     group/GroupInstanceCustomImpl.cpp
     group/GroupInstanceCustomImpl.h
     group/GroupInstanceImpl.h
@@ -71,8 +79,10 @@ PRIVATE
     group/GroupJoinPayload.h
     group/GroupNetworkManager.cpp
     group/GroupNetworkManager.h
-    group/StreamingPart.cpp
-    group/StreamingPart.h
+    group/StreamingMediaContext.cpp
+    group/StreamingMediaContext.h
+    group/VideoStreamingPart.cpp
+    group/VideoStreamingPart.h
 
     platform/PlatformInterface.h
 
