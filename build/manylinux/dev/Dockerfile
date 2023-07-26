@@ -178,7 +178,7 @@ FROM builder AS vpx
 RUN git clone -b v1.13.0 --depth=1 https://github.com/webmproject/libvpx.git  vpx
 
 WORKDIR vpx
-RUN ./libvpx/configure
+RUN ./configure
 RUN make -j$(nproc)
 RUN make DESTDIR="$LibrariesPath/vpx-cache" install
 
