@@ -301,10 +301,10 @@ _enableHighBitrateVideo(enableHighBitrateVideo) {
 	mediaDeps.audio_encoder_factory = webrtc::CreateAudioEncoderFactory<webrtc::AudioEncoderOpus>();
 	mediaDeps.audio_decoder_factory = webrtc::CreateAudioDecoderFactory<webrtc::AudioDecoderOpus>();
 
-	// mediaDeps.video_encoder_factory = PlatformInterface::SharedInstance()->makeVideoEncoderFactory();
-	// mediaDeps.video_decoder_factory = PlatformInterface::SharedInstance()->makeVideoDecoderFactory();
-    mediaDeps.video_encoder_factory = std::make_unique<VideoEncoderFactory>();
-    mediaDeps.video_decoder_factory = std::make_unique<VideoDecoderFactory>();
+	mediaDeps.video_encoder_factory = PlatformInterface::SharedInstance()->makeVideoEncoderFactory();
+	mediaDeps.video_decoder_factory = PlatformInterface::SharedInstance()->makeVideoDecoderFactory();
+    // mediaDeps.video_encoder_factory = std::make_unique<VideoEncoderFactory>();
+    // mediaDeps.video_decoder_factory = std::make_unique<VideoDecoderFactory>();
 
 	_myVideoFormats = ComposeSupportedFormats(
 		mediaDeps.video_encoder_factory->GetSupportedFormats(),
