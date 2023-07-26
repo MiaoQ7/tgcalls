@@ -17,6 +17,7 @@ namespace tgcalls {
 }
 
 VideoCaptureInterfaceObject::~VideoCaptureInterfaceObject() {
+    printf("VideoCaptureInterfaceObject::~VideoCaptureInterfaceObject\n");
 	if (_videoCapturer) {
 		_videoCapturer->setUncroppedOutput(nullptr);
 	}
@@ -177,7 +178,9 @@ VideoCaptureInterfaceImpl::VideoCaptureInterfaceImpl(std::string deviceId,
 }) {
 }
 
-VideoCaptureInterfaceImpl::~VideoCaptureInterfaceImpl() = default;
+VideoCaptureInterfaceImpl::~VideoCaptureInterfaceImpl() {
+    printf("VideoCaptureInterfaceImpl::~VideoCaptureInterfaceImpl\n");
+}
 
 void VideoCaptureInterfaceImpl::switchToDevice(std::string deviceId, bool isScreenCapture) {
 	_impl.perform(RTC_FROM_HERE, [deviceId, isScreenCapture](VideoCaptureInterfaceObject *impl) {
