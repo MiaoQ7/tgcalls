@@ -91,6 +91,7 @@ static const NSInteger kMaxInflightBuffers = 1;
   __kindof MTKView *_view;
 
   // Controller.
+  dispatch_semaphore_t _inflight_semaphore;
 
   // Renderer.
   id<MTLDevice> _device;
@@ -115,6 +116,7 @@ static const NSInteger kMaxInflightBuffers = 1;
 
 - (instancetype)init {
   if (self = [super init]) {
+    _inflight_semaphore = dispatch_semaphore_create(kMaxInflightBuffers);
   }
 
   return self;
@@ -151,12 +153,12 @@ static const NSInteger kMaxInflightBuffers = 1;
 }
 
 - (NSString *)shaderSource {
-  RTC_NOTREACHED() << "Virtual method not implemented in subclass.";
+  RTC_DCHECK_NOTREACHED() << "Virtual method not implemented in subclass.";
   return nil;
 }
 
 - (void)uploadTexturesToRenderEncoder:(id<MTLRenderCommandEncoder>)renderEncoder {
-  RTC_NOTREACHED() << "Virtual method not implemented in subclass.";
+  RTC_DCHECK_NOTREACHED() << "Virtual method not implemented in subclass.";
 }
 
 - (void)getWidth:(int *)width
@@ -166,7 +168,7 @@ static const NSInteger kMaxInflightBuffers = 1;
            cropX:(int *)cropX
            cropY:(int *)cropY
          ofFrame:(nonnull RTC_OBJC_TYPE(RTCVideoFrame) *)frame {
-  RTC_NOTREACHED() << "Virtual method not implemented in subclass.";
+  RTC_DCHECK_NOTREACHED() << "Virtual method not implemented in subclass.";
 }
 
 - (BOOL)setupTexturesForFrame:(nonnull RTC_OBJC_TYPE(RTCVideoFrame) *)frame {
@@ -275,6 +277,11 @@ static const NSInteger kMaxInflightBuffers = 1;
   id<MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
   commandBuffer.label = commandBufferLabel;
 
+  __block dispatch_semaphore_t block_semaphore = _inflight_semaphore;
+  [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> _Nonnull) {
+    // GPU work completed.
+    dispatch_semaphore_signal(block_semaphore);
+  }];
 
   MTLRenderPassDescriptor *renderPassDescriptor = _view.currentRenderPassDescriptor;
   if (renderPassDescriptor) {  // Valid drawable.
@@ -308,10 +315,12 @@ static const NSInteger kMaxInflightBuffers = 1;
   @autoreleasepool {
     // Wait until the inflight (curently sent to GPU) command buffer
     // has completed the GPU work.
+    dispatch_semaphore_wait(_inflight_semaphore, DISPATCH_TIME_FOREVER);
 
     if ([self setupTexturesForFrame:frame]) {
       [self render];
     } else {
+      dispatch_semaphore_signal(_inflight_semaphore);
     }
   }
 }

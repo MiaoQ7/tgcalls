@@ -27,10 +27,10 @@ struct PacketOptions;
 
 namespace webrtc {
 
-// This represents the internal interface beneath SrtpTransportInterface;
-// it is not accessible to API consumers but is accessible to internal classes
-// in order to send and receive RTP and RTCP packets belonging to a single RTP
-// session. Additional convenience and configuration methods are also provided.
+// This class is an internal interface; it is not accessible to API consumers
+// but is accessible to internal classes in order to send and receive RTP and
+// RTCP packets belonging to a single RTP session. Additional convenience and
+// configuration methods are also provided.
 class RtpTransportInternal : public sigslot::has_slots<> {
  public:
   virtual ~RtpTransportInternal() = default;
@@ -56,8 +56,6 @@ class RtpTransportInternal : public sigslot::has_slots<> {
   // for RTP packets because they would be forwarded to the BaseChannel through
   // the RtpDemuxer callback.
   sigslot::signal2<rtc::CopyOnWriteBuffer*, int64_t> SignalRtcpPacketReceived;
-  
-  sigslot::signal3<rtc::CopyOnWriteBuffer*, int64_t, bool> SignalRtpPacketReceived;
 
   // Called whenever the network route of the P2P layer transport changes.
   // The argument is an optional network route.
@@ -71,7 +69,7 @@ class RtpTransportInternal : public sigslot::has_slots<> {
 
   virtual bool IsWritable(bool rtcp) const = 0;
 
-  // TODO(zhihuang): Pass the |packet| by copy so that the original data
+  // TODO(zhihuang): Pass the `packet` by copy so that the original data
   // wouldn't be modified.
   virtual bool SendRtpPacket(rtc::CopyOnWriteBuffer* packet,
                              const rtc::PacketOptions& options,

@@ -157,7 +157,6 @@ class AudioDeviceModuleImpl : public AudioDeviceModuleForTest {
   int RestartRecordingInternally() override { return -1; }
   int SetPlayoutSampleRate(uint32_t sample_rate) override { return -1; }
   int SetRecordingSampleRate(uint32_t sample_rate) override { return -1; }
-  void ResetAudioDevice(AudioDeviceGeneric *p);
 
  private:
   PlatformType Platform() const;

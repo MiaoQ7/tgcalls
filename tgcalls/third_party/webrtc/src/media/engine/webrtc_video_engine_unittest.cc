@@ -23,6 +23,7 @@
 #include "api/rtc_event_log/rtc_event_log.h"
 #include "api/rtp_parameters.h"
 #include "api/task_queue/default_task_queue_factory.h"
+#include "api/test/mock_encoder_selector.h"
 #include "api/test/mock_video_bitrate_allocator.h"
 #include "api/test/mock_video_bitrate_allocator_factory.h"
 #include "api/test/mock_video_decoder_factory.h"
@@ -30,17 +31,18 @@
 #include "api/test/video/function_video_decoder_factory.h"
 #include "api/transport/field_trial_based_config.h"
 #include "api/units/time_delta.h"
+#include "api/units/timestamp.h"
 #include "api/video/builtin_video_bitrate_allocator_factory.h"
 #include "api/video/i420_buffer.h"
 #include "api/video/video_bitrate_allocation.h"
 #include "api/video_codecs/builtin_video_decoder_factory.h"
 #include "api/video_codecs/builtin_video_encoder_factory.h"
+#include "api/video_codecs/h264_profile_level_id.h"
 #include "api/video_codecs/sdp_video_format.h"
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_encoder.h"
 #include "api/video_codecs/video_encoder_factory.h"
 #include "call/flexfec_receive_stream.h"
-#include "common_video/h264/profile_level_id.h"
 #include "media/base/fake_frame_source.h"
 #include "media/base/fake_network_interface.h"
 #include "media/base/fake_video_renderer.h"
@@ -49,34 +51,40 @@
 #include "media/base/test_utils.h"
 #include "media/engine/fake_webrtc_call.h"
 #include "media/engine/fake_webrtc_video_engine.h"
-#include "media/engine/simulcast.h"
 #include "media/engine/webrtc_voice_engine.h"
+#include "modules/rtp_rtcp/source/rtp_packet.h"
 #include "rtc_base/arraysize.h"
+#include "rtc_base/event.h"
 #include "rtc_base/experiments/min_video_bitrate_experiment.h"
 #include "rtc_base/fake_clock.h"
 #include "rtc_base/gunit.h"
 #include "rtc_base/numerics/safe_conversions.h"
 #include "rtc_base/time_utils.h"
 #include "test/fake_decoder.h"
-#include "test/field_trial.h"
 #include "test/frame_forwarder.h"
 #include "test/gmock.h"
-#include "test/rtp_header_parser.h"
+#include "test/scoped_key_value_config.h"
+#include "test/time_controller/simulated_time_controller.h"
+#include "video/config/simulcast.h"
 
 using ::testing::_;
 using ::testing::Contains;
 using ::testing::Each;
+using ::testing::ElementsAre;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
 using ::testing::Field;
+using ::testing::Gt;
 using ::testing::IsEmpty;
+using ::testing::Lt;
 using ::testing::Pair;
 using ::testing::Return;
 using ::testing::SizeIs;
 using ::testing::StrNe;
 using ::testing::Values;
-using webrtc::BitrateConstraints;
-using webrtc::RtpExtension;
+using ::webrtc::BitrateConstraints;
+using ::webrtc::RtpExtension;
+using ::webrtc::RtpPacket;
 
 namespace {
 static const int kDefaultQpMax = 56;
@@ -95,6 +103,7 @@ static const uint32_t kSsrcs3[] = {1, 2, 3};
 static const uint32_t kRtxSsrcs1[] = {4};
 static const uint32_t kFlexfecSsrc = 5;
 static const uint32_t kIncomingUnsignalledSsrc = 0xC0FFEE;
+static const int64_t kUnsignalledReceiveStreamCooldownMs = 500;
 
 constexpr uint32_t kRtpHeaderSize = 12;
 
@@ -123,8 +132,8 @@ void VerifyCodecHasDefaultFeedbackParams(const cricket::VideoCodec& codec,
       cricket::kRtcpFbParamCcm, cricket::kRtcpFbCcmParamFir)));
 }
 
-// Return true if any codec in |codecs| is an RTX codec with associated payload
-// type |payload_type|.
+// Return true if any codec in `codecs` is an RTX codec with associated payload
+// type `payload_type`.
 bool HasRtxCodec(const std::vector<cricket::VideoCodec>& codecs,
                  int payload_type) {
   for (const cricket::VideoCodec& codec : codecs) {
@@ -139,7 +148,17 @@ bool HasRtxCodec(const std::vector<cricket::VideoCodec>& codecs,
   return false;
 }
 
-// TODO(nisse): Duplicated in call.cc.
+// Return true if any codec in `codecs` is an RTX codec, independent of
+// payload type.
+bool HasAnyRtxCodec(const std::vector<cricket::VideoCodec>& codecs) {
+  for (const cricket::VideoCodec& codec : codecs) {
+    if (absl::EqualsIgnoreCase(codec.name.c_str(), "rtx")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const int* FindKeyByValue(const std::map<int, int>& m, int v) {
   for (const auto& kv : m) {
     if (kv.second == v)
@@ -148,15 +167,16 @@ const int* FindKeyByValue(const std::map<int, int>& m, int v) {
   return nullptr;
 }
 
-bool HasRtxReceiveAssociation(const webrtc::VideoReceiveStream::Config& config,
-                              int payload_type) {
+bool HasRtxReceiveAssociation(
+    const webrtc::VideoReceiveStreamInterface::Config& config,
+    int payload_type) {
   return FindKeyByValue(config.rtp.rtx_associated_payload_types,
                         payload_type) != nullptr;
 }
 
 // Check that there's an Rtx payload type for each decoder.
 bool VerifyRtxReceiveAssociations(
-    const webrtc::VideoReceiveStream::Config& config) {
+    const webrtc::VideoReceiveStreamInterface::Config& config) {
   for (const auto& decoder : config.decoders) {
     if (!HasRtxReceiveAssociation(config, decoder.payload_type))
       return false;
@@ -169,7 +189,7 @@ rtc::scoped_refptr<webrtc::VideoFrameBuffer> CreateBlackFrameBuffer(
     int height) {
   rtc::scoped_refptr<webrtc::I420Buffer> buffer =
       webrtc::I420Buffer::Create(width, height);
-  webrtc::I420Buffer::SetBlack(buffer);
+  webrtc::I420Buffer::SetBlack(buffer.get());
   return buffer;
 }
 
@@ -219,31 +239,38 @@ class MockVideoSource : public rtc::VideoSourceInterface<webrtc::VideoFrame> {
               (override));
 };
 
+std::vector<webrtc::Resolution> GetStreamResolutions(
+    const std::vector<webrtc::VideoStream>& streams) {
+  std::vector<webrtc::Resolution> res;
+  for (const auto& s : streams) {
+    if (s.active) {
+      res.push_back(
+          {rtc::checked_cast<int>(s.width), rtc::checked_cast<int>(s.height)});
+    }
+  }
+  return res;
+}
+
 }  // namespace
 
 #define EXPECT_FRAME_WAIT(c, w, h, t)                        \
   EXPECT_EQ_WAIT((c), renderer_.num_rendered_frames(), (t)); \
   EXPECT_EQ((w), renderer_.width());                         \
-  EXPECT_EQ((h), renderer_.height());                        \
-  EXPECT_EQ(0, renderer_.errors());
+  EXPECT_EQ((h), renderer_.height());
 
 #define EXPECT_FRAME_ON_RENDERER_WAIT(r, c, w, h, t)   \
   EXPECT_EQ_WAIT((c), (r).num_rendered_frames(), (t)); \
   EXPECT_EQ((w), (r).width());                         \
-  EXPECT_EQ((h), (r).height());                        \
-  EXPECT_EQ(0, (r).errors());
+  EXPECT_EQ((h), (r).height());
 
 namespace cricket {
 class WebRtcVideoEngineTest : public ::testing::Test {
  public:
   WebRtcVideoEngineTest() : WebRtcVideoEngineTest("") {}
   explicit WebRtcVideoEngineTest(const std::string& field_trials)
-      : override_field_trials_(
-            field_trials.empty()
-                ? nullptr
-                : std::make_unique<webrtc::test::ScopedFieldTrials>(
-                      field_trials)),
-        task_queue_factory_(webrtc::CreateDefaultTaskQueueFactory()),
+      : field_trials_(field_trials),
+        time_controller_(webrtc::Timestamp::Millis(4711)),
+        task_queue_factory_(time_controller_.CreateTaskQueueFactory()),
         call_(webrtc::Call::Create([&] {
           webrtc::Call::Config call_config(&event_log_);
           call_config.task_queue_factory = task_queue_factory_.get();
@@ -258,11 +285,7 @@ class WebRtcVideoEngineTest : public ::testing::Test {
                     encoder_factory_),
                 std::unique_ptr<cricket::FakeWebRtcVideoDecoderFactory>(
                     decoder_factory_),
-                field_trials_) {
-    // Ensure fake clock doesn't return 0, which will cause some initializations
-    // fail inside RTP senders.
-    fake_clock_.AdvanceTime(webrtc::TimeDelta::Micros(1));
-  }
+                field_trials_) {}
 
  protected:
   void AssignDefaultAptRtxTypes();
@@ -283,11 +306,8 @@ class WebRtcVideoEngineTest : public ::testing::Test {
 
   void ExpectRtpCapabilitySupport(const char* uri, bool supported) const;
 
-  // Has to be the first one, so it is initialized before the call or there is a
-  // race condition in the clock access.
-  rtc::ScopedFakeClock fake_clock_;
-  std::unique_ptr<webrtc::test::ScopedFieldTrials> override_field_trials_;
-  webrtc::FieldTrialBasedConfig field_trials_;
+  webrtc::test::ScopedKeyValueConfig field_trials_;
+  webrtc::GlobalSimulatedTimeController time_controller_;
   webrtc::RtcEventLogNull event_log_;
   std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory_;
   // Used in WebRtcVideoEngineVoiceTest, but defined here so it's properly
@@ -556,6 +576,7 @@ TEST_F(WebRtcVideoEngineTest, UseFactoryForVp8WhenSupported) {
                                         rtc::kNumMicrosecsPerSec / 30);
   EXPECT_TRUE(channel->SetVideoSend(kSsrc, nullptr, &frame_forwarder));
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
   // Sending one frame will have allocate the encoder.
   ASSERT_TRUE(encoder_factory_->WaitForCreatedVideoEncoders(1));
   EXPECT_TRUE_WAIT(encoder_factory_->encoders()[0]->GetNumEncodedFrames() > 0,
@@ -581,20 +602,21 @@ TEST_F(WebRtcVideoEngineTest, UseFactoryForVp8WhenSupported) {
 // TODO(deadbeef): This test should be updated if/when we start
 // adding RTX codecs for unrecognized codec names.
 TEST_F(WebRtcVideoEngineTest, RtxCodecAddedForH264Codec) {
-  using webrtc::H264::kLevel1;
-  using webrtc::H264::ProfileLevelId;
-  using webrtc::H264::ProfileLevelIdToString;
+  using webrtc::H264Level;
+  using webrtc::H264Profile;
+  using webrtc::H264ProfileLevelId;
+  using webrtc::H264ProfileLevelIdToString;
   webrtc::SdpVideoFormat h264_constrained_baseline("H264");
   h264_constrained_baseline.parameters[kH264FmtpProfileLevelId] =
-      *ProfileLevelIdToString(
-          ProfileLevelId(webrtc::H264::kProfileConstrainedBaseline, kLevel1));
+      *H264ProfileLevelIdToString(H264ProfileLevelId(
+          H264Profile::kProfileConstrainedBaseline, H264Level::kLevel1));
   webrtc::SdpVideoFormat h264_constrained_high("H264");
   h264_constrained_high.parameters[kH264FmtpProfileLevelId] =
-      *ProfileLevelIdToString(
-          ProfileLevelId(webrtc::H264::kProfileConstrainedHigh, kLevel1));
+      *H264ProfileLevelIdToString(H264ProfileLevelId(
+          H264Profile::kProfileConstrainedHigh, H264Level::kLevel1));
   webrtc::SdpVideoFormat h264_high("H264");
-  h264_high.parameters[kH264FmtpProfileLevelId] = *ProfileLevelIdToString(
-      ProfileLevelId(webrtc::H264::kProfileHigh, kLevel1));
+  h264_high.parameters[kH264FmtpProfileLevelId] = *H264ProfileLevelIdToString(
+      H264ProfileLevelId(H264Profile::kProfileHigh, H264Level::kLevel1));
 
   encoder_factory_->AddSupportedVideoCodec(h264_constrained_baseline);
   encoder_factory_->AddSupportedVideoCodec(h264_constrained_high);
@@ -721,10 +743,10 @@ size_t WebRtcVideoEngineTest::GetEngineCodecIndex(
     // The tests only use H264 Constrained Baseline. Make sure we don't return
     // an internal H264 codec from the engine with a different H264 profile.
     if (absl::EqualsIgnoreCase(name.c_str(), kH264CodecName)) {
-      const absl::optional<webrtc::H264::ProfileLevelId> profile_level_id =
-          webrtc::H264::ParseSdpProfileLevelId(engine_codec.params);
+      const absl::optional<webrtc::H264ProfileLevelId> profile_level_id =
+          webrtc::ParseSdpForH264ProfileLevelId(engine_codec.params);
       if (profile_level_id->profile !=
-          webrtc::H264::kProfileConstrainedBaseline) {
+          webrtc::H264Profile::kProfileConstrainedBaseline) {
         continue;
       }
     }
@@ -805,7 +827,7 @@ TEST_F(WebRtcVideoEngineTest, UsesSimulcastAdapterForVp8Factories) {
                                         rtc::kNumMicrosecsPerSec / 60);
   EXPECT_TRUE(channel->SetVideoSend(ssrcs.front(), nullptr, &frame_forwarder));
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
-
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
   ASSERT_TRUE(encoder_factory_->WaitForCreatedVideoEncoders(2));
 
   // Verify that encoders are configured for simulcast through adapter
@@ -847,6 +869,7 @@ TEST_F(WebRtcVideoEngineTest, ChannelWithH264CanChangeToVp8) {
   EXPECT_TRUE(channel->SetVideoSend(kSsrc, nullptr, &frame_forwarder));
   // Sending one frame will have allocate the encoder.
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
 
   ASSERT_EQ_WAIT(1u, encoder_factory_->encoders().size(), kTimeout);
 
@@ -856,6 +879,7 @@ TEST_F(WebRtcVideoEngineTest, ChannelWithH264CanChangeToVp8) {
 
   // Sending one frame will switch encoder.
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
 
   EXPECT_EQ_WAIT(1u, encoder_factory_->encoders().size(), kTimeout);
 }
@@ -885,6 +909,7 @@ TEST_F(WebRtcVideoEngineTest,
                                         rtc::kNumMicrosecsPerSec / 30);
   EXPECT_TRUE(channel->SetVideoSend(ssrcs.front(), nullptr, &frame_forwarder));
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
 
   ASSERT_TRUE(encoder_factory_->WaitForCreatedVideoEncoders(2));
   ASSERT_TRUE(encoder_factory_->encoders()[0]->WaitForInitEncode());
@@ -917,6 +942,7 @@ TEST_F(WebRtcVideoEngineTest,
                                         rtc::kNumMicrosecsPerSec / 30);
   EXPECT_TRUE(channel->SetVideoSend(kSsrc, nullptr, &frame_forwarder));
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
   ASSERT_TRUE(encoder_factory_->WaitForCreatedVideoEncoders(1));
   ASSERT_EQ(1u, encoder_factory_->encoders().size());
   ASSERT_TRUE(encoder_factory_->encoders()[0]->WaitForInitEncode());
@@ -929,9 +955,8 @@ TEST_F(WebRtcVideoEngineTest,
 }
 
 TEST_F(WebRtcVideoEngineTest, SimulcastEnabledForH264BehindFieldTrial) {
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-H264Simulcast/Enabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-H264Simulcast/Enabled/");
   AddSupportedVideoCodecType("H264");
 
   std::unique_ptr<VideoMediaChannel> channel(engine_.CreateMediaChannel(
@@ -951,6 +976,7 @@ TEST_F(WebRtcVideoEngineTest, SimulcastEnabledForH264BehindFieldTrial) {
                                         rtc::kNumMicrosecsPerSec / 30);
   EXPECT_TRUE(channel->SetVideoSend(ssrcs[0], nullptr, &frame_forwarder));
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
 
   ASSERT_TRUE(encoder_factory_->WaitForCreatedVideoEncoders(1));
   ASSERT_EQ(1u, encoder_factory_->encoders().size());
@@ -970,9 +996,8 @@ TEST_F(WebRtcVideoEngineTest, Flexfec03SendCodecEnablesWithFieldTrial) {
 
   EXPECT_THAT(engine_.send_codecs(), Not(Contains(flexfec)));
 
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-FlexFEC-03-Advertised/Enabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-FlexFEC-03-Advertised/Enabled/");
   EXPECT_THAT(engine_.send_codecs(), Contains(flexfec));
 }
 
@@ -985,9 +1010,8 @@ TEST_F(WebRtcVideoEngineTest, Flexfec03ReceiveCodecDisablesWithFieldTrial) {
 
   EXPECT_THAT(engine_.recv_codecs(), Contains(flexfec));
 
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-FlexFEC-03-Advertised/Disabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-FlexFEC-03-Advertised/Disabled/");
   EXPECT_THAT(engine_.recv_codecs(), Not(Contains(flexfec)));
 }
 
@@ -998,9 +1022,8 @@ TEST_F(WebRtcVideoEngineTest, Flexfec03LowerPayloadTypeRange) {
   auto flexfec = Field("name", &VideoCodec::name, "flexfec-03");
 
   // FlexFEC is active with field trial.
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-FlexFEC-03-Advertised/Enabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-FlexFEC-03-Advertised/Enabled/");
   auto send_codecs = engine_.send_codecs();
   auto it = std::find_if(send_codecs.begin(), send_codecs.end(),
                          [](const cricket::VideoCodec& codec) {
@@ -1065,11 +1088,13 @@ TEST_F(WebRtcVideoEngineTest, RegisterDecodersIfSupported) {
 
   EXPECT_TRUE(
       channel->AddRecvStream(cricket::StreamParams::CreateLegacy(kSsrc)));
-  ASSERT_EQ(1u, decoder_factory_->decoders().size());
+  // Decoders are not created until they are used.
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
+  EXPECT_EQ(0u, decoder_factory_->decoders().size());
 
   // Setting codecs of the same type should not reallocate the decoder.
   EXPECT_TRUE(channel->SetRecvParameters(parameters));
-  EXPECT_EQ(1, decoder_factory_->GetNumCreatedDecoders());
+  EXPECT_EQ(0, decoder_factory_->GetNumCreatedDecoders());
 
   // Remove stream previously added to free the external decoder instance.
   EXPECT_TRUE(channel->RemoveRecvStream(kSsrc));
@@ -1091,13 +1116,15 @@ TEST_F(WebRtcVideoEngineTest, RegisterH264DecoderIfSupported) {
 
   EXPECT_TRUE(
       channel->AddRecvStream(cricket::StreamParams::CreateLegacy(kSsrc)));
-  ASSERT_EQ(1u, decoder_factory_->decoders().size());
+  // Decoders are not created until they are used.
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Zero());
+  ASSERT_EQ(0u, decoder_factory_->decoders().size());
 }
 
 // Tests when GetSources is called with non-existing ssrc, it will return an
 // empty list of RtpSource without crashing.
 TEST_F(WebRtcVideoEngineTest, GetSourcesWithNonExistingSsrc) {
-  // Setup an recv stream with |kSsrc|.
+  // Setup an recv stream with `kSsrc`.
   AddSupportedVideoCodecType("VP8");
   cricket::VideoRecvParameters parameters;
   parameters.codecs.push_back(GetEngineCodec("VP8"));
@@ -1123,7 +1150,7 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, NullFactories) {
 }
 
 TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, EmptyFactories) {
-  // |engine| take ownership of the factories.
+  // `engine` take ownership of the factories.
   webrtc::MockVideoEncoderFactory* encoder_factory =
       new webrtc::MockVideoEncoderFactory();
   webrtc::MockVideoDecoderFactory* decoder_factory =
@@ -1146,7 +1173,7 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, EmptyFactories) {
 // from the engine and that we will create a Vp8 encoder and decoder using the
 // new factories.
 TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, Vp8) {
-  // |engine| take ownership of the factories.
+  // `engine` take ownership of the factories.
   webrtc::MockVideoEncoderFactory* encoder_factory =
       new webrtc::MockVideoEncoderFactory();
   webrtc::MockVideoDecoderFactory* decoder_factory =
@@ -1202,26 +1229,21 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, Vp8) {
   VerifyCodecHasDefaultFeedbackParams(engine_codecs.at(0),
                                       /*lntf_expected=*/false);
 
-  // Mock encoder creation. |engine| take ownership of the encoder.
-  webrtc::VideoEncoderFactory::CodecInfo codec_info;
-  codec_info.has_internal_source = false;
+  // Mock encoder creation. `engine` take ownership of the encoder.
   const webrtc::SdpVideoFormat format("VP8");
-  EXPECT_CALL(*encoder_factory, QueryVideoEncoder(format))
-      .WillRepeatedly(Return(codec_info));
-  rtc::Event encoder_created;
   EXPECT_CALL(*encoder_factory, CreateVideoEncoder(format)).WillOnce([&] {
-    encoder_created.Set();
     return std::make_unique<FakeWebRtcVideoEncoder>(nullptr);
   });
 
-  // Mock decoder creation. |engine| take ownership of the decoder.
-  EXPECT_CALL(*decoder_factory, CreateVideoDecoder(format)).WillOnce([] {
-    return std::make_unique<FakeWebRtcVideoDecoder>(nullptr);
-  });
+  // Expect no decoder to be created at this point. The decoder will only be
+  // created if we receive payload data.
+  EXPECT_CALL(*decoder_factory, CreateVideoDecoder(format)).Times(0);
 
   // Create a call.
   webrtc::RtcEventLogNull event_log;
-  auto task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
+  webrtc::GlobalSimulatedTimeController time_controller(
+      webrtc::Timestamp::Millis(4711));
+  auto task_queue_factory = time_controller.CreateTaskQueueFactory();
   webrtc::Call::Config call_config(&event_log);
   webrtc::FieldTrialBasedConfig field_trials;
   call_config.trials = &field_trials;
@@ -1248,7 +1270,7 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, Vp8) {
   EXPECT_TRUE(send_channel->SetVideoSend(send_ssrc, nullptr, &frame_forwarder));
   // Sending one frame will allocate the encoder.
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
-  encoder_created.Wait(kTimeout);
+  time_controller.AdvanceTime(webrtc::TimeDelta::Zero());
 
   // Create recv channel.
   const int recv_ssrc = 321;
@@ -1266,56 +1288,6 @@ TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, Vp8) {
   EXPECT_CALL(*decoder_factory, Die());
   EXPECT_CALL(*rate_allocator_factory, Die());
   EXPECT_TRUE(send_channel->RemoveSendStream(send_ssrc));
-  EXPECT_TRUE(recv_channel->RemoveRecvStream(recv_ssrc));
-}
-
-// Test behavior when decoder factory fails to create a decoder (returns null).
-TEST(WebRtcVideoEngineNewVideoCodecFactoryTest, NullDecoder) {
-  // |engine| take ownership of the factories.
-  webrtc::MockVideoEncoderFactory* encoder_factory =
-      new webrtc::MockVideoEncoderFactory();
-  webrtc::MockVideoDecoderFactory* decoder_factory =
-      new webrtc::MockVideoDecoderFactory();
-  std::unique_ptr<webrtc::MockVideoBitrateAllocatorFactory>
-      rate_allocator_factory =
-          std::make_unique<webrtc::MockVideoBitrateAllocatorFactory>();
-  webrtc::FieldTrialBasedConfig trials;
-  WebRtcVideoEngine engine(
-      (std::unique_ptr<webrtc::VideoEncoderFactory>(encoder_factory)),
-      (std::unique_ptr<webrtc::VideoDecoderFactory>(decoder_factory)), trials);
-  const webrtc::SdpVideoFormat vp8_format("VP8");
-  const std::vector<webrtc::SdpVideoFormat> supported_formats = {vp8_format};
-  EXPECT_CALL(*encoder_factory, GetSupportedFormats())
-      .WillRepeatedly(Return(supported_formats));
-
-  // Decoder creation fails.
-  EXPECT_CALL(*decoder_factory, CreateVideoDecoder).WillOnce([] {
-    return nullptr;
-  });
-
-  // Create a call.
-  webrtc::RtcEventLogNull event_log;
-  auto task_queue_factory = webrtc::CreateDefaultTaskQueueFactory();
-  webrtc::Call::Config call_config(&event_log);
-  webrtc::FieldTrialBasedConfig field_trials;
-  call_config.trials = &field_trials;
-  call_config.task_queue_factory = task_queue_factory.get();
-  const auto call = absl::WrapUnique(webrtc::Call::Create(call_config));
-
-  // Create recv channel.
-  EXPECT_CALL(*decoder_factory, GetSupportedFormats())
-      .WillRepeatedly(::testing::Return(supported_formats));
-  const int recv_ssrc = 321;
-  std::unique_ptr<VideoMediaChannel> recv_channel(engine.CreateMediaChannel(
-      call.get(), GetMediaConfig(), VideoOptions(), webrtc::CryptoOptions(),
-      rate_allocator_factory.get()));
-  cricket::VideoRecvParameters recv_parameters;
-  recv_parameters.codecs.push_back(engine.recv_codecs().front());
-  EXPECT_TRUE(recv_channel->SetRecvParameters(recv_parameters));
-  EXPECT_TRUE(recv_channel->AddRecvStream(
-      cricket::StreamParams::CreateLegacy(recv_ssrc)));
-
-  // Remove streams previously added to free the encoder and decoder instance.
   EXPECT_TRUE(recv_channel->RemoveRecvStream(recv_ssrc));
 }
 
@@ -1368,7 +1340,7 @@ TEST_F(WebRtcVideoEngineTest, DISABLED_RecreatesEncoderOnContentTypeChange) {
   options.video_noise_reduction.emplace(false);
   EXPECT_TRUE(channel->SetVideoSend(kSsrc, &options, &frame_forwarder));
   // Change back to regular video content, update encoder. Also change
-  // a non |is_screencast| option just to verify it doesn't affect recreation.
+  // a non `is_screencast` option just to verify it doesn't affect recreation.
   frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
   ASSERT_TRUE(encoder_factory_->WaitForCreatedVideoEncoders(3));
   EXPECT_EQ(webrtc::VideoCodecMode::kRealtimeVideo,
@@ -1377,6 +1349,26 @@ TEST_F(WebRtcVideoEngineTest, DISABLED_RecreatesEncoderOnContentTypeChange) {
   // Remove stream previously added to free the external encoder instance.
   EXPECT_TRUE(channel->RemoveSendStream(kSsrc));
   EXPECT_EQ(0u, encoder_factory_->encoders().size());
+}
+
+TEST_F(WebRtcVideoEngineTest, SetVideoRtxEnabled) {
+  AddSupportedVideoCodecType("VP8");
+  std::vector<VideoCodec> send_codecs;
+  std::vector<VideoCodec> recv_codecs;
+
+  webrtc::test::ScopedKeyValueConfig field_trials;
+
+  // Don't want RTX
+  send_codecs = engine_.send_codecs(false);
+  EXPECT_FALSE(HasAnyRtxCodec(send_codecs));
+  recv_codecs = engine_.recv_codecs(false);
+  EXPECT_FALSE(HasAnyRtxCodec(recv_codecs));
+
+  // Want RTX
+  send_codecs = engine_.send_codecs(true);
+  EXPECT_TRUE(HasAnyRtxCodec(send_codecs));
+  recv_codecs = engine_.recv_codecs(true);
+  EXPECT_TRUE(HasAnyRtxCodec(recv_codecs));
 }
 
 class WebRtcVideoChannelEncodedFrameCallbackTest : public ::testing::Test {
@@ -1416,8 +1408,12 @@ class WebRtcVideoChannelEncodedFrameCallbackTest : public ::testing::Test {
     channel_->SetRecvParameters(parameters);
   }
 
+  ~WebRtcVideoChannelEncodedFrameCallbackTest() override {
+    channel_->SetInterface(nullptr);
+  }
+
   void DeliverKeyFrame(uint32_t ssrc) {
-    webrtc::RtpPacket packet;
+    RtpPacket packet;
     packet.SetMarker(true);
     packet.SetPayloadType(96);  // VP8
     packet.SetSsrc(ssrc);
@@ -1426,6 +1422,13 @@ class WebRtcVideoChannelEncodedFrameCallbackTest : public ::testing::Test {
     uint8_t* buf_ptr = packet.AllocatePayload(11);
     memset(buf_ptr, 0, 11);  // Pass MSAN (don't care about bytes 1-9)
     buf_ptr[0] = 0x10;       // Partition ID 0 + beginning of partition.
+    constexpr unsigned width = 1080;
+    constexpr unsigned height = 720;
+    buf_ptr[6] = width & 255;
+    buf_ptr[7] = width >> 8;
+    buf_ptr[8] = height & 255;
+    buf_ptr[9] = height >> 8;
+
     call_->Receiver()->DeliverPacket(webrtc::MediaType::VIDEO, packet.Buffer(),
                                      /*packet_time_us=*/0);
   }
@@ -1433,11 +1436,11 @@ class WebRtcVideoChannelEncodedFrameCallbackTest : public ::testing::Test {
   void DeliverKeyFrameAndWait(uint32_t ssrc) {
     DeliverKeyFrame(ssrc);
     EXPECT_EQ_WAIT(1, renderer_.num_rendered_frames(), kTimeout);
-    EXPECT_EQ(0, renderer_.errors());
   }
 
   static const std::vector<webrtc::SdpVideoFormat> kSdpVideoFormats;
-  webrtc::FieldTrialBasedConfig field_trials_;
+  rtc::AutoThread main_thread_;
+  webrtc::test::ScopedKeyValueConfig field_trials_;
   webrtc::RtcEventLogNull event_log_;
   std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory_;
   std::unique_ptr<webrtc::Call> call_;
@@ -1464,7 +1467,6 @@ TEST_F(WebRtcVideoChannelEncodedFrameCallbackTest,
   EXPECT_TRUE(channel_->SetSink(kSsrc, &renderer_));
   DeliverKeyFrame(kSsrc);
   EXPECT_EQ_WAIT(1, renderer_.num_rendered_frames(), kTimeout);
-  EXPECT_EQ(0, renderer_.errors());
   channel_->RemoveRecvStream(kSsrc);
 }
 
@@ -1478,7 +1480,6 @@ TEST_F(WebRtcVideoChannelEncodedFrameCallbackTest,
   channel_->SetRecordableEncodedFrameCallback(kSsrc, callback.AsStdFunction());
   DeliverKeyFrame(kSsrc);
   EXPECT_EQ_WAIT(1, renderer_.num_rendered_frames(), kTimeout);
-  EXPECT_EQ(0, renderer_.errors());
   channel_->RemoveRecvStream(kSsrc);
 }
 
@@ -1492,7 +1493,6 @@ TEST_F(WebRtcVideoChannelEncodedFrameCallbackTest,
   channel_->SetRecordableEncodedFrameCallback(kSsrc, callback.AsStdFunction());
   DeliverKeyFrame(kSsrc);
   EXPECT_EQ_WAIT(1, renderer_.num_rendered_frames(), kTimeout);
-  EXPECT_EQ(0, renderer_.errors());
   channel_->RemoveRecvStream(kSsrc);
 }
 
@@ -1536,7 +1536,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
                 webrtc::CreateBuiltinVideoDecoderFactory(),
                 field_trials_) {}
 
-  virtual void SetUp() {
+  void SetUp() override {
     // One testcase calls SetUp in a loop, only create call_ once.
     if (!call_) {
       webrtc::Call::Config call_config(&event_log_);
@@ -1578,6 +1578,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     // Make the second renderer available for use by a new stream.
     EXPECT_TRUE(channel_->SetSink(kSsrc + 2, &renderer2_));
   }
+
   // Setup an additional stream just to send video. Defer add recv stream.
   // This is required if you want to test unsignalled recv of video rtp packets.
   void SetUpSecondStreamWithNoRecv() {
@@ -1596,7 +1597,17 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     EXPECT_TRUE(
         channel_->SetVideoSend(kSsrc + 2, nullptr, frame_forwarder_2_.get()));
   }
-  virtual void TearDown() { channel_.reset(); }
+
+  void TearDown() override {
+    channel_->SetInterface(nullptr);
+    channel_.reset();
+  }
+
+  void ResetTest() {
+    TearDown();
+    SetUp();
+  }
+
   bool SetDefaultCodec() { return SetOneCodec(DefaultCodec()); }
 
   bool SetOneCodec(const cricket::VideoCodec& codec) {
@@ -1636,20 +1647,13 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     return network_interface_.NumRtpPackets(ssrc);
   }
   int NumSentSsrcs() { return network_interface_.NumSentSsrcs(); }
-  const rtc::CopyOnWriteBuffer* GetRtpPacket(int index) {
+  rtc::CopyOnWriteBuffer GetRtpPacket(int index) {
     return network_interface_.GetRtpPacket(index);
   }
-  static int GetPayloadType(const rtc::CopyOnWriteBuffer* p) {
-    webrtc::RTPHeader header;
-    EXPECT_TRUE(ParseRtpPacket(p, &header));
-    return header.payloadType;
-  }
-
-  static bool ParseRtpPacket(const rtc::CopyOnWriteBuffer* p,
-                             webrtc::RTPHeader* header) {
-    std::unique_ptr<webrtc::RtpHeaderParser> parser(
-        webrtc::RtpHeaderParser::CreateForTest());
-    return parser->Parse(p->cdata(), p->size(), header);
+  static int GetPayloadType(rtc::CopyOnWriteBuffer p) {
+    RtpPacket header;
+    EXPECT_TRUE(header.Parse(std::move(p)));
+    return header.PayloadType();
   }
 
   // Tests that we can send and receive frames.
@@ -1660,8 +1664,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     EXPECT_EQ(0, renderer_.num_rendered_frames());
     SendFrame();
     EXPECT_FRAME_WAIT(1, kVideoWidth, kVideoHeight, kTimeout);
-    std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-    EXPECT_EQ(codec.id, GetPayloadType(p.get()));
+    EXPECT_EQ(codec.id, GetPayloadType(GetRtpPacket(0)));
   }
 
   void SendReceiveManyAndGetStats(const cricket::VideoCodec& codec,
@@ -1677,8 +1680,7 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
         EXPECT_FRAME_WAIT(frame + i * fps, kVideoWidth, kVideoHeight, kTimeout);
       }
     }
-    std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-    EXPECT_EQ(codec.id, GetPayloadType(p.get()));
+    EXPECT_EQ(codec.id, GetPayloadType(GetRtpPacket(0)));
   }
 
   cricket::VideoSenderInfo GetSenderStats(size_t i) {
@@ -1722,8 +1724,10 @@ class WebRtcVideoChannelBaseTest : public ::testing::Test {
     return cricket::StreamParams::CreateLegacy(kSsrc);
   }
 
+  rtc::AutoThread main_thread_;
   webrtc::RtcEventLogNull event_log_;
-  webrtc::FieldTrialBasedConfig field_trials_;
+  webrtc::test::ScopedKeyValueConfig field_trials_;
+  std::unique_ptr<webrtc::test::ScopedKeyValueConfig> override_field_trials_;
   std::unique_ptr<webrtc::TaskQueueFactory> task_queue_factory_;
   std::unique_ptr<webrtc::Call> call_;
   std::unique_ptr<webrtc::VideoBitrateAllocatorFactory>
@@ -1768,67 +1772,12 @@ TEST_F(WebRtcVideoChannelBaseTest, SetSendWithoutCodecs) {
 TEST_F(WebRtcVideoChannelBaseTest, SetSendSetsTransportBufferSizes) {
   EXPECT_TRUE(SetOneCodec(DefaultCodec()));
   EXPECT_TRUE(SetSend(true));
-  EXPECT_EQ(64 * 1024, network_interface_.sendbuf_size());
-  EXPECT_EQ(256 * 1024, network_interface_.recvbuf_size());
-}
-
-// Test that we properly set the send and recv buffer sizes when overriding
-// via field trials.
-TEST_F(WebRtcVideoChannelBaseTest, OverridesRecvBufferSize) {
-  // Set field trial to override the default recv buffer size, and then re-run
-  // setup where the interface is created and configured.
-  const int kCustomRecvBufferSize = 123456;
-  webrtc::test::ScopedFieldTrials field_trial(
-      "WebRTC-IncreasedReceivebuffers/123456/");
-  SetUp();
-
-  EXPECT_TRUE(SetOneCodec(DefaultCodec()));
-  EXPECT_TRUE(SetSend(true));
-  EXPECT_EQ(64 * 1024, network_interface_.sendbuf_size());
-  EXPECT_EQ(kCustomRecvBufferSize, network_interface_.recvbuf_size());
-}
-
-// Test that we properly set the send and recv buffer sizes when overriding
-// via field trials with suffix.
-TEST_F(WebRtcVideoChannelBaseTest, OverridesRecvBufferSizeWithSuffix) {
-  // Set field trial to override the default recv buffer size, and then re-run
-  // setup where the interface is created and configured.
-  const int kCustomRecvBufferSize = 123456;
-  webrtc::test::ScopedFieldTrials field_trial(
-      "WebRTC-IncreasedReceivebuffers/123456_Dogfood/");
-  SetUp();
-
-  EXPECT_TRUE(SetOneCodec(DefaultCodec()));
-  EXPECT_TRUE(SetSend(true));
-  EXPECT_EQ(64 * 1024, network_interface_.sendbuf_size());
-  EXPECT_EQ(kCustomRecvBufferSize, network_interface_.recvbuf_size());
-}
-
-// Test that we properly set the send and recv buffer sizes when overriding
-// via field trials that don't make any sense.
-TEST_F(WebRtcVideoChannelBaseTest, InvalidRecvBufferSize) {
-  // Set bogus field trial values to override the default recv buffer size, and
-  // then re-run setup where the interface is created and configured. The
-  // default value should still be used.
-
-  for (std::string group : {" ", "NotANumber", "-1", "0"}) {
-    std::string field_trial_string = "WebRTC-IncreasedReceivebuffers/";
-    field_trial_string += group;
-    field_trial_string += "/";
-    webrtc::test::ScopedFieldTrials field_trial(field_trial_string);
-    SetUp();
-
-    EXPECT_TRUE(SetOneCodec(DefaultCodec()));
-    EXPECT_TRUE(SetSend(true));
-    EXPECT_EQ(64 * 1024, network_interface_.sendbuf_size());
-    EXPECT_EQ(256 * 1024, network_interface_.recvbuf_size());
-  }
+  EXPECT_EQ(kVideoRtpSendBufferSize, network_interface_.sendbuf_size());
+  EXPECT_EQ(kVideoRtpRecvBufferSize, network_interface_.recvbuf_size());
 }
 
 // Test that stats work properly for a 1-1 call.
 TEST_F(WebRtcVideoChannelBaseTest, GetStats) {
-  SetUp();
-
   const int kDurationSec = 3;
   const int kFps = 10;
   SendReceiveManyAndGetStats(DefaultCodec(), kDurationSec, kFps);
@@ -1847,7 +1796,7 @@ TEST_F(WebRtcVideoChannelBaseTest, GetStats) {
   EXPECT_EQ(DefaultCodec().id, *info.senders[0].codec_payload_type);
   EXPECT_EQ(0, info.senders[0].firs_rcvd);
   EXPECT_EQ(0, info.senders[0].plis_rcvd);
-  EXPECT_EQ(0, info.senders[0].nacks_rcvd);
+  EXPECT_EQ(0u, info.senders[0].nacks_rcvd);
   EXPECT_EQ(kVideoWidth, info.senders[0].send_frame_width);
   EXPECT_EQ(kVideoHeight, info.senders[0].send_frame_height);
   EXPECT_GT(info.senders[0].framerate_input, 0);
@@ -1871,7 +1820,7 @@ TEST_F(WebRtcVideoChannelBaseTest, GetStats) {
   // EXPECT_EQ(0, info.receivers[0].packets_concealed);
   EXPECT_EQ(0, info.receivers[0].firs_sent);
   EXPECT_EQ(0, info.receivers[0].plis_sent);
-  EXPECT_EQ(0, info.receivers[0].nacks_sent);
+  EXPECT_EQ(0U, info.receivers[0].nacks_sent);
   EXPECT_EQ(kVideoWidth, info.receivers[0].frame_width);
   EXPECT_EQ(kVideoHeight, info.receivers[0].frame_height);
   EXPECT_GT(info.receivers[0].framerate_rcvd, 0);
@@ -1885,8 +1834,6 @@ TEST_F(WebRtcVideoChannelBaseTest, GetStats) {
 
 // Test that stats work properly for a conf call with multiple recv streams.
 TEST_F(WebRtcVideoChannelBaseTest, GetStatsMultipleRecvStreams) {
-  SetUp();
-
   cricket::FakeVideoRenderer renderer1, renderer2;
   EXPECT_TRUE(SetOneCodec(DefaultCodec()));
   cricket::VideoSendParameters parameters;
@@ -2015,15 +1962,14 @@ TEST_F(WebRtcVideoChannelBaseTest, SetSendSsrc) {
   EXPECT_TRUE(SetSend(true));
   SendFrame();
   EXPECT_TRUE_WAIT(NumRtpPackets() > 0, kTimeout);
-  webrtc::RTPHeader header;
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(kSsrc, header.ssrc);
+  RtpPacket header;
+  EXPECT_TRUE(header.Parse(GetRtpPacket(0)));
+  EXPECT_EQ(kSsrc, header.Ssrc());
 
   // Packets are being paced out, so these can mismatch between the first and
   // second call to NumRtpPackets until pending packets are paced out.
-  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.ssrc), kTimeout);
-  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.ssrc), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.Ssrc()), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.Ssrc()), kTimeout);
   EXPECT_EQ(1, NumSentSsrcs());
   EXPECT_EQ(0, NumRtpPackets(kSsrc - 1));
   EXPECT_EQ(0, NumRtpBytes(kSsrc - 1));
@@ -2040,14 +1986,13 @@ TEST_F(WebRtcVideoChannelBaseTest, SetSendSsrcAfterSetCodecs) {
   EXPECT_TRUE(SetSend(true));
   EXPECT_TRUE(WaitAndSendFrame(0));
   EXPECT_TRUE_WAIT(NumRtpPackets() > 0, kTimeout);
-  webrtc::RTPHeader header;
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(999u, header.ssrc);
+  RtpPacket header;
+  EXPECT_TRUE(header.Parse(GetRtpPacket(0)));
+  EXPECT_EQ(999u, header.Ssrc());
   // Packets are being paced out, so these can mismatch between the first and
   // second call to NumRtpPackets until pending packets are paced out.
-  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.ssrc), kTimeout);
-  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.ssrc), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpPackets(), NumRtpPackets(header.Ssrc()), kTimeout);
+  EXPECT_EQ_WAIT(NumRtpBytes(), NumRtpBytes(header.Ssrc()), kTimeout);
   EXPECT_EQ(1, NumSentSsrcs());
   EXPECT_EQ(0, NumRtpPackets(kSsrc));
   EXPECT_EQ(0, NumRtpBytes(kSsrc));
@@ -2056,16 +2001,13 @@ TEST_F(WebRtcVideoChannelBaseTest, SetSendSsrcAfterSetCodecs) {
 // Test that we can set the default video renderer before and after
 // media is received.
 TEST_F(WebRtcVideoChannelBaseTest, SetSink) {
-  uint8_t data1[] = {0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
-                     0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
-
-  rtc::CopyOnWriteBuffer packet1(data1, sizeof(data1));
-  rtc::SetBE32(packet1.MutableData() + 8, kSsrc);
+  RtpPacket packet;
+  packet.SetSsrc(kSsrc);
   channel_->SetDefaultSink(NULL);
   EXPECT_TRUE(SetDefaultCodec());
   EXPECT_TRUE(SetSend(true));
   EXPECT_EQ(0, renderer_.num_rendered_frames());
-  channel_->OnPacketReceived(packet1, /* packet_time_us */ -1);
+  channel_->OnPacketReceived(packet.Buffer(), /* packet_time_us */ -1);
   channel_->SetDefaultSink(&renderer_);
   SendFrame();
   EXPECT_FRAME_WAIT(1, kVideoWidth, kVideoHeight, kTimeout);
@@ -2079,12 +2021,10 @@ TEST_F(WebRtcVideoChannelBaseTest, AddRemoveSendStreams) {
   SendFrame();
   EXPECT_FRAME_WAIT(1, kVideoWidth, kVideoHeight, kTimeout);
   EXPECT_GT(NumRtpPackets(), 0);
-  webrtc::RTPHeader header;
+  RtpPacket header;
   size_t last_packet = NumRtpPackets() - 1;
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(
-      GetRtpPacket(static_cast<int>(last_packet)));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(kSsrc, header.ssrc);
+  EXPECT_TRUE(header.Parse(GetRtpPacket(static_cast<int>(last_packet))));
+  EXPECT_EQ(kSsrc, header.Ssrc());
 
   // Remove the send stream that was added during Setup.
   EXPECT_TRUE(channel_->RemoveSendStream(kSsrc));
@@ -2099,9 +2039,8 @@ TEST_F(WebRtcVideoChannelBaseTest, AddRemoveSendStreams) {
   EXPECT_TRUE_WAIT(NumRtpPackets() > rtp_packets, kTimeout);
 
   last_packet = NumRtpPackets() - 1;
-  p.reset(GetRtpPacket(static_cast<int>(last_packet)));
-  EXPECT_TRUE(ParseRtpPacket(p.get(), &header));
-  EXPECT_EQ(789u, header.ssrc);
+  EXPECT_TRUE(header.Parse(GetRtpPacket(static_cast<int>(last_packet))));
+  EXPECT_EQ(789u, header.Ssrc());
 }
 
 // Tests the behavior of incoming streams in a conference scenario.
@@ -2129,8 +2068,7 @@ TEST_F(WebRtcVideoChannelBaseTest, SimulateConference) {
   EXPECT_FRAME_ON_RENDERER_WAIT(renderer2, 1, kVideoWidth, kVideoHeight,
                                 kTimeout);
 
-  std::unique_ptr<const rtc::CopyOnWriteBuffer> p(GetRtpPacket(0));
-  EXPECT_EQ(DefaultCodec().id, GetPayloadType(p.get()));
+  EXPECT_EQ(DefaultCodec().id, GetPayloadType(GetRtpPacket(0)));
   EXPECT_EQ(kVideoWidth, renderer1.width());
   EXPECT_EQ(kVideoHeight, renderer1.height());
   EXPECT_EQ(kVideoWidth, renderer2.width());
@@ -2366,116 +2304,80 @@ TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderFallback) {
   EXPECT_EQ("VP8", codec.name);
 }
 
-TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchWithConfig) {
-  const std::string kParam = "the-param";
-  const std::string kPing = "ping";
-  const std::string kPong = "pong";
-
+TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchDefaultFallback) {
   cricket::VideoSendParameters parameters;
-  VideoCodec vp9 = GetEngineCodec("VP9");
-  vp9.params[kParam] = kPong;
-  parameters.codecs.push_back(vp9);
-
-  VideoCodec vp8 = GetEngineCodec("VP8");
-  vp8.params[kParam] = kPing;
-  parameters.codecs.push_back(vp8);
-
+  parameters.codecs.push_back(GetEngineCodec("VP9"));
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
   EXPECT_TRUE(channel_->SetSendParameters(parameters));
-  channel_->SetVideoCodecSwitchingEnabled(true);
 
   VideoCodec codec;
   ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP9"));
+  EXPECT_EQ("VP9", codec.name);
 
   // RequestEncoderSwitch will post a task to the worker thread (which is also
   // the current thread), hence the ProcessMessages call.
-  webrtc::EncoderSwitchRequestCallback::Config conf1{"VP8", kParam, kPing};
-  channel_->RequestEncoderSwitch(conf1);
+  channel_->RequestEncoderSwitch(webrtc::SdpVideoFormat("UnavailableCodec"),
+                                 /*allow_default_fallback=*/true);
   rtc::Thread::Current()->ProcessMessages(30);
-  ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP8"));
-  EXPECT_THAT(codec.params, Contains(Pair(kParam, kPing)));
 
-  webrtc::EncoderSwitchRequestCallback::Config conf2{"VP9", kParam, kPong};
-  channel_->RequestEncoderSwitch(conf2);
-  rtc::Thread::Current()->ProcessMessages(30);
+  // Requested encoder is not available. Default fallback is allowed. Switch to
+  // the next negotiated codec, VP8.
   ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP9"));
-  EXPECT_THAT(codec.params, Contains(Pair(kParam, kPong)));
+  EXPECT_EQ("VP8", codec.name);
 }
 
-TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchIncorrectParam) {
-  const std::string kParam = "the-param";
-  const std::string kPing = "ping";
-  const std::string kPong = "pong";
+TEST_F(WebRtcVideoChannelBaseTest, RequestEncoderSwitchStrictPreference) {
+  VideoCodec vp9 = GetEngineCodec("VP9");
+  vp9.params["profile-id"] = "0";
 
   cricket::VideoSendParameters parameters;
-  VideoCodec vp9 = GetEngineCodec("VP9");
-  vp9.params[kParam] = kPong;
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
   parameters.codecs.push_back(vp9);
-
-  VideoCodec vp8 = GetEngineCodec("VP8");
-  vp8.params[kParam] = kPing;
-  parameters.codecs.push_back(vp8);
-
   EXPECT_TRUE(channel_->SetSendParameters(parameters));
-  channel_->SetVideoCodecSwitchingEnabled(true);
 
   VideoCodec codec;
   ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP9"));
+  EXPECT_EQ("VP8", codec.name);
 
-  // RequestEncoderSwitch will post a task to the worker thread (which is also
-  // the current thread), hence the ProcessMessages call.
-  webrtc::EncoderSwitchRequestCallback::Config conf1{"VP8", kParam, kPing};
-  channel_->RequestEncoderSwitch(conf1);
+  channel_->RequestEncoderSwitch(
+      webrtc::SdpVideoFormat("VP9", {{"profile-id", "1"}}),
+      /*allow_default_fallback=*/false);
   rtc::Thread::Current()->ProcessMessages(30);
-  ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP8"));
-  EXPECT_THAT(codec.params, Contains(Pair(kParam, kPing)));
 
-  // Incorrect conf2.value, expect no codec switch.
-  webrtc::EncoderSwitchRequestCallback::Config conf2{"VP9", kParam, kPing};
-  channel_->RequestEncoderSwitch(conf2);
-  rtc::Thread::Current()->ProcessMessages(30);
+  // VP9 profile_id=1 is not available. Default fallback is not allowed. Switch
+  // is not performed.
   ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP8"));
-  EXPECT_THAT(codec.params, Contains(Pair(kParam, kPing)));
+  EXPECT_EQ("VP8", codec.name);
+
+  channel_->RequestEncoderSwitch(
+      webrtc::SdpVideoFormat("VP9", {{"profile-id", "0"}}),
+      /*allow_default_fallback=*/false);
+  rtc::Thread::Current()->ProcessMessages(30);
+
+  // VP9 profile_id=0 is available. Switch encoder.
+  ASSERT_TRUE(channel_->GetSendCodec(&codec));
+  EXPECT_EQ("VP9", codec.name);
 }
 
-TEST_F(WebRtcVideoChannelBaseTest,
-       RequestEncoderSwitchWithConfigBeforeEnabling) {
-  const std::string kParam = "the-param";
-  const std::string kPing = "ping";
-  const std::string kPong = "pong";
-
+TEST_F(WebRtcVideoChannelBaseTest, SendCodecIsMovedToFrontInRtpParameters) {
   cricket::VideoSendParameters parameters;
-  VideoCodec vp9 = GetEngineCodec("VP9");
-  vp9.params[kParam] = kPong;
-  parameters.codecs.push_back(vp9);
-
-  VideoCodec vp8 = GetEngineCodec("VP8");
-  vp8.params[kParam] = kPing;
-  parameters.codecs.push_back(vp8);
-
+  parameters.codecs.push_back(GetEngineCodec("VP9"));
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
   EXPECT_TRUE(channel_->SetSendParameters(parameters));
-
-  VideoCodec codec;
-  ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP9"));
-
-  webrtc::EncoderSwitchRequestCallback::Config conf{"VP8", kParam, kPing};
-  channel_->RequestEncoderSwitch(conf);
-
-  // Enable codec switching after it has been requested.
   channel_->SetVideoCodecSwitchingEnabled(true);
 
-  // RequestEncoderSwitch will post a task to the worker thread (which is also
+  auto send_codecs = channel_->GetRtpSendParameters(kSsrc).codecs;
+  ASSERT_EQ(send_codecs.size(), 2u);
+  EXPECT_THAT("VP9", send_codecs[0].name);
+
+  // RequestEncoderFallback will post a task to the worker thread (which is also
   // the current thread), hence the ProcessMessages call.
+  channel_->RequestEncoderFallback();
   rtc::Thread::Current()->ProcessMessages(30);
-  ASSERT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_THAT(codec.name, Eq("VP8"));
-  EXPECT_THAT(codec.params, Contains(Pair(kParam, kPing)));
+
+  send_codecs = channel_->GetRtpSendParameters(kSsrc).codecs;
+  ASSERT_EQ(send_codecs.size(), 2u);
+  EXPECT_THAT("VP8", send_codecs[0].name);
 }
 
 #endif  // defined(RTC_ENABLE_VP9)
@@ -2494,7 +2396,7 @@ class WebRtcVideoChannelTest : public WebRtcVideoEngineTest {
     AddSupportedVideoCodecType("H264");
 #endif
 
-    fake_call_.reset(new FakeCall());
+    fake_call_.reset(new FakeCall(&field_trials_));
     channel_.reset(engine_.CreateMediaChannel(
         fake_call_.get(), GetMediaConfig(), VideoOptions(),
         webrtc::CryptoOptions(), video_bitrate_allocator_factory_.get()));
@@ -2503,6 +2405,17 @@ class WebRtcVideoChannelTest : public WebRtcVideoEngineTest {
     send_parameters_.codecs = engine_.send_codecs();
     recv_parameters_.codecs = engine_.recv_codecs();
     ASSERT_TRUE(channel_->SetSendParameters(send_parameters_));
+  }
+
+  void TearDown() override {
+    channel_->SetInterface(nullptr);
+    channel_ = nullptr;
+    fake_call_ = nullptr;
+  }
+
+  void ResetTest() {
+    TearDown();
+    SetUp();
   }
 
   cricket::VideoCodec GetEngineCodec(const std::string& name) {
@@ -2516,6 +2429,16 @@ class WebRtcVideoChannelTest : public WebRtcVideoEngineTest {
   }
 
   cricket::VideoCodec DefaultCodec() { return GetEngineCodec("VP8"); }
+
+  // After receciving and processing the packet, enough time is advanced that
+  // the unsignalled receive stream cooldown is no longer in effect.
+  void ReceivePacketAndAdvanceTime(rtc::CopyOnWriteBuffer packet,
+                                   int64_t packet_time_us) {
+    channel_->OnPacketReceived(packet, packet_time_us);
+    rtc::Thread::Current()->ProcessMessages(0);
+    time_controller_.AdvanceTime(
+        webrtc::TimeDelta::Millis(kUnsignalledReceiveStreamCooldownMs));
+  }
 
  protected:
   FakeVideoSendStream* AddSendStream() {
@@ -2926,8 +2849,8 @@ TEST_F(WebRtcVideoChannelTest, RecvAbsoluteSendTimeHeaderExtensions) {
 }
 
 TEST_F(WebRtcVideoChannelTest, FiltersExtensionsPicksTransportSeqNum) {
-  webrtc::test::ScopedFieldTrials override_field_trials_(
-      "WebRTC-FilterAbsSendTimeExtension/Enabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-FilterAbsSendTimeExtension/Enabled/");
   // Enable three redundant extensions.
   std::vector<std::string> extensions;
   extensions.push_back(RtpExtension::kAbsSendTimeUri);
@@ -3014,11 +2937,11 @@ TEST_F(WebRtcVideoChannelTest, IdenticalRecvExtensionsDoesntRecreateStream) {
 
   EXPECT_EQ(1, fake_call_->GetNumCreatedReceiveStreams());
 
-  // Setting different extensions should recreate the stream.
+  // Setting different extensions should not require the stream to be recreated.
   recv_parameters_.extensions.resize(1);
   EXPECT_TRUE(channel_->SetRecvParameters(recv_parameters_));
 
-  EXPECT_EQ(2, fake_call_->GetNumCreatedReceiveStreams());
+  EXPECT_EQ(1, fake_call_->GetNumCreatedReceiveStreams());
 }
 
 TEST_F(WebRtcVideoChannelTest,
@@ -3125,12 +3048,12 @@ TEST_F(WebRtcVideoChannelTest, RtcpIsCompoundByDefault) {
 
 TEST_F(WebRtcVideoChannelTest, TransportCcIsEnabledByDefault) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  EXPECT_TRUE(stream->GetConfig().rtp.transport_cc);
+  EXPECT_TRUE(stream->transport_cc());
 }
 
 TEST_F(WebRtcVideoChannelTest, TransportCcCanBeEnabledAndDisabled) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  EXPECT_TRUE(stream->GetConfig().rtp.transport_cc);
+  EXPECT_TRUE(stream->transport_cc());
 
   // Verify that transport cc feedback is turned off when send(!) codecs without
   // transport cc feedback are set.
@@ -3139,14 +3062,14 @@ TEST_F(WebRtcVideoChannelTest, TransportCcCanBeEnabledAndDisabled) {
   EXPECT_TRUE(parameters.codecs[0].feedback_params.params().empty());
   EXPECT_TRUE(channel_->SetSendParameters(parameters));
   stream = fake_call_->GetVideoReceiveStreams()[0];
-  EXPECT_FALSE(stream->GetConfig().rtp.transport_cc);
+  EXPECT_FALSE(stream->transport_cc());
 
   // Verify that transport cc feedback is turned on when setting default codecs
   // since the default codecs have transport cc feedback enabled.
   parameters.codecs = engine_.send_codecs();
   EXPECT_TRUE(channel_->SetSendParameters(parameters));
   stream = fake_call_->GetVideoReceiveStreams()[0];
-  EXPECT_TRUE(stream->GetConfig().rtp.transport_cc);
+  EXPECT_TRUE(stream->transport_cc());
 }
 
 TEST_F(WebRtcVideoChannelTest, LossNotificationIsDisabledByDefault) {
@@ -3154,18 +3077,16 @@ TEST_F(WebRtcVideoChannelTest, LossNotificationIsDisabledByDefault) {
 }
 
 TEST_F(WebRtcVideoChannelTest, LossNotificationIsEnabledByFieldTrial) {
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-RtcpLossNotification/Enabled/");
-  SetUp();
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-RtcpLossNotification/Enabled/");
+  ResetTest();
   TestLossNotificationState(true);
 }
 
 TEST_F(WebRtcVideoChannelTest, LossNotificationCanBeEnabledAndDisabled) {
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-RtcpLossNotification/Enabled/");
-  SetUp();
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-RtcpLossNotification/Enabled/");
+  ResetTest();
 
   AssignDefaultCodec();
   VerifyCodecHasDefaultFeedbackParams(default_codec_, true);
@@ -3449,14 +3370,14 @@ TEST_F(WebRtcVideoChannelTest, VerifyVp8SpecificSettings) {
   ASSERT_TRUE(stream->GetVp8Settings(&vp8_settings)) << "No VP8 config set.";
   EXPECT_FALSE(vp8_settings.denoisingOn);
   EXPECT_TRUE(vp8_settings.automaticResizeOn);
-  EXPECT_TRUE(vp8_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
 
   stream = SetDenoisingOption(last_ssrc_, &frame_forwarder, true);
 
   ASSERT_TRUE(stream->GetVp8Settings(&vp8_settings)) << "No VP8 config set.";
   EXPECT_TRUE(vp8_settings.denoisingOn);
   EXPECT_TRUE(vp8_settings.automaticResizeOn);
-  EXPECT_TRUE(vp8_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
 
   EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
   stream = SetUpSimulcast(true, false);
@@ -3468,7 +3389,7 @@ TEST_F(WebRtcVideoChannelTest, VerifyVp8SpecificSettings) {
   ASSERT_TRUE(stream->GetVp8Settings(&vp8_settings)) << "No VP8 config set.";
   // Autmatic resize off when using simulcast.
   EXPECT_FALSE(vp8_settings.automaticResizeOn);
-  EXPECT_TRUE(vp8_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
 
   // In screen-share mode, denoising is forced off.
   VideoOptions options;
@@ -3480,16 +3401,16 @@ TEST_F(WebRtcVideoChannelTest, VerifyVp8SpecificSettings) {
   EXPECT_EQ(3u, stream->GetVideoStreams().size());
   ASSERT_TRUE(stream->GetVp8Settings(&vp8_settings)) << "No VP8 config set.";
   EXPECT_FALSE(vp8_settings.denoisingOn);
-  // Resizing and frame dropping always off for screen sharing.
+  // Resizing always off for screen sharing.
   EXPECT_FALSE(vp8_settings.automaticResizeOn);
-  EXPECT_FALSE(vp8_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
 
   stream = SetDenoisingOption(last_ssrc_, &frame_forwarder, true);
 
   ASSERT_TRUE(stream->GetVp8Settings(&vp8_settings)) << "No VP8 config set.";
   EXPECT_FALSE(vp8_settings.denoisingOn);
   EXPECT_FALSE(vp8_settings.automaticResizeOn);
-  EXPECT_FALSE(vp8_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
 
   EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
 }
@@ -3516,7 +3437,7 @@ TEST_F(WebRtcVideoChannelTest, SetIdenticalOptionsDoesntReconfigureEncoder) {
   EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, &options, &frame_forwarder));
   EXPECT_EQ(1, send_stream->num_encoder_reconfigurations());
 
-  // Change |options| and expect 2 reconfigurations.
+  // Change `options` and expect 2 reconfigurations.
   options.video_noise_reduction = true;
   EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, &options, &frame_forwarder));
   EXPECT_EQ(2, send_stream->num_encoder_reconfigurations());
@@ -3558,19 +3479,51 @@ TEST_F(Vp9SettingsTest, VerifyVp9SpecificSettings) {
   ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
   EXPECT_TRUE(vp9_settings.denoisingOn)
       << "VP9 denoising should be on by default.";
+  EXPECT_TRUE(vp9_settings.automaticResizeOn)
+      << "Automatic resize on for one active stream.";
 
   stream = SetDenoisingOption(last_ssrc_, &frame_forwarder, false);
 
   ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
   EXPECT_FALSE(vp9_settings.denoisingOn);
-  // Frame dropping always on for real time video.
-  EXPECT_TRUE(vp9_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled)
+      << "Frame dropping always on for real time video.";
+  EXPECT_TRUE(vp9_settings.automaticResizeOn);
 
   stream = SetDenoisingOption(last_ssrc_, &frame_forwarder, true);
 
   ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
   EXPECT_TRUE(vp9_settings.denoisingOn);
-  EXPECT_TRUE(vp9_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
+  EXPECT_TRUE(vp9_settings.automaticResizeOn);
+
+  webrtc::RtpParameters rtp_parameters =
+      channel_->GetRtpSendParameters(last_ssrc_);
+  EXPECT_THAT(
+      rtp_parameters.encodings,
+      ElementsAre(Field(&webrtc::RtpEncodingParameters::scalability_mode,
+                        absl::nullopt)));
+  rtp_parameters.encodings[0].scalability_mode = "L2T1";
+  EXPECT_TRUE(channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters).ok());
+
+  ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
+  EXPECT_TRUE(vp9_settings.denoisingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
+  EXPECT_FALSE(vp9_settings.automaticResizeOn)
+      << "Automatic resize off for multiple spatial layers.";
+
+  rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
+  EXPECT_THAT(rtp_parameters.encodings,
+              ElementsAre(Field(
+                  &webrtc::RtpEncodingParameters::scalability_mode, "L2T1")));
+  rtp_parameters.encodings[0].scalability_mode = "L1T1";
+  EXPECT_TRUE(channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters).ok());
+
+  ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
+  EXPECT_TRUE(vp9_settings.denoisingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
+  EXPECT_TRUE(vp9_settings.automaticResizeOn)
+      << "Automatic resize on for one spatial layer.";
 
   // In screen-share mode, denoising is forced off.
   VideoOptions options;
@@ -3581,14 +3534,17 @@ TEST_F(Vp9SettingsTest, VerifyVp9SpecificSettings) {
 
   ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
   EXPECT_FALSE(vp9_settings.denoisingOn);
-  // Frame dropping always on for screen sharing.
-  EXPECT_TRUE(vp9_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled)
+      << "Frame dropping always on for screen sharing.";
+  EXPECT_FALSE(vp9_settings.automaticResizeOn)
+      << "Automatic resize off for screencast.";
 
   stream = SetDenoisingOption(last_ssrc_, &frame_forwarder, false);
 
   ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
   EXPECT_FALSE(vp9_settings.denoisingOn);
-  EXPECT_TRUE(vp9_settings.frameDroppingOn);
+  EXPECT_TRUE(stream->GetEncoderConfig().frame_drop_enabled);
+  EXPECT_FALSE(vp9_settings.automaticResizeOn);
 
   EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
 }
@@ -3684,6 +3640,92 @@ TEST_F(Vp9SettingsTest, AllEncodingParametersCopied) {
   EXPECT_TRUE(encoder_config.simulcast_layers[2].active);
 }
 
+TEST_F(Vp9SettingsTest, MaxBitrateDeterminedBySvcResolutions) {
+  cricket::VideoSendParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP9"));
+  ASSERT_TRUE(channel_->SetSendParameters(parameters));
+
+  std::vector<uint32_t> ssrcs = MAKE_VECTOR(kSsrcs3);
+
+  FakeVideoSendStream* stream =
+      AddSendStream(CreateSimStreamParams("cname", ssrcs));
+
+  webrtc::VideoSendStream::Config config = stream->GetConfig().Copy();
+
+  webrtc::test::FrameForwarder frame_forwarder;
+  EXPECT_TRUE(channel_->SetVideoSend(ssrcs[0], nullptr, &frame_forwarder));
+  channel_->SetSend(true);
+
+  // Send frame at 1080p@30fps.
+  frame_forwarder.IncomingCapturedFrame(frame_source_.GetFrame(
+      1920, 1080, webrtc::VideoRotation::kVideoRotation_0,
+      /*duration_us=*/33000));
+
+  webrtc::VideoCodecVP9 vp9_settings;
+  ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
+
+  const size_t kNumSpatialLayers = ssrcs.size();
+  const size_t kNumTemporalLayers = 3;
+  EXPECT_EQ(vp9_settings.numberOfSpatialLayers, kNumSpatialLayers);
+  EXPECT_EQ(vp9_settings.numberOfTemporalLayers, kNumTemporalLayers);
+
+  EXPECT_TRUE(channel_->SetVideoSend(ssrcs[0], nullptr, nullptr));
+
+  // VideoStream max bitrate should be more than legacy 2.5Mbps default stream
+  // cap.
+  EXPECT_THAT(
+      stream->GetVideoStreams(),
+      ElementsAre(Field(&webrtc::VideoStream::max_bitrate_bps, Gt(2500000))));
+
+  // Update send parameters to 2Mbps, this should cap the max bitrate of the
+  // stream.
+  parameters.max_bandwidth_bps = 2000000;
+  channel_->SetSendParameters(parameters);
+  EXPECT_THAT(
+      stream->GetVideoStreams(),
+      ElementsAre(Field(&webrtc::VideoStream::max_bitrate_bps, Eq(2000000))));
+}
+
+TEST_F(Vp9SettingsTest, Vp9SvcTargetBitrateCappedByMax) {
+  cricket::VideoSendParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP9"));
+  ASSERT_TRUE(channel_->SetSendParameters(parameters));
+
+  std::vector<uint32_t> ssrcs = MAKE_VECTOR(kSsrcs3);
+
+  FakeVideoSendStream* stream =
+      AddSendStream(CreateSimStreamParams("cname", ssrcs));
+
+  webrtc::VideoSendStream::Config config = stream->GetConfig().Copy();
+
+  webrtc::test::FrameForwarder frame_forwarder;
+  EXPECT_TRUE(channel_->SetVideoSend(ssrcs[0], nullptr, &frame_forwarder));
+  channel_->SetSend(true);
+
+  // Set up 3 spatial layers with 720p, which should result in a max bitrate of
+  // 2084 kbps.
+  frame_forwarder.IncomingCapturedFrame(
+      frame_source_.GetFrame(1280, 720, webrtc::VideoRotation::kVideoRotation_0,
+                             /*duration_us=*/33000));
+
+  webrtc::VideoCodecVP9 vp9_settings;
+  ASSERT_TRUE(stream->GetVp9Settings(&vp9_settings)) << "No VP9 config set.";
+
+  const size_t kNumSpatialLayers = ssrcs.size();
+  const size_t kNumTemporalLayers = 3;
+  EXPECT_EQ(vp9_settings.numberOfSpatialLayers, kNumSpatialLayers);
+  EXPECT_EQ(vp9_settings.numberOfTemporalLayers, kNumTemporalLayers);
+
+  EXPECT_TRUE(channel_->SetVideoSend(ssrcs[0], nullptr, nullptr));
+
+  // VideoStream both min and max bitrate should be lower than legacy 2.5Mbps
+  // default stream cap.
+  EXPECT_THAT(
+      stream->GetVideoStreams()[0],
+      AllOf(Field(&webrtc::VideoStream::max_bitrate_bps, Lt(2500000)),
+            Field(&webrtc::VideoStream::target_bitrate_bps, Lt(2500000))));
+}
+
 class Vp9SettingsTestWithFieldTrial
     : public Vp9SettingsTest,
       public ::testing::WithParamInterface<
@@ -3734,14 +3776,6 @@ INSTANTIATE_TEST_SUITE_P(
     Vp9SettingsTestWithFieldTrial,
     Values(
         std::make_tuple("", 1, 1, webrtc::InterLayerPredMode::kOnKeyPic),
-        std::make_tuple("WebRTC-SupportVP9SVC/Default/",
-                        1,
-                        1,
-                        webrtc::InterLayerPredMode::kOnKeyPic),
-        std::make_tuple("WebRTC-SupportVP9SVC/EnabledByFlag_2SL3TL/",
-                        2,
-                        3,
-                        webrtc::InterLayerPredMode::kOnKeyPic),
         std::make_tuple("WebRTC-Vp9InterLayerPred/Default/",
                         1,
                         1,
@@ -3773,8 +3807,8 @@ TEST_F(WebRtcVideoChannelTest, VerifyMinBitrate) {
 }
 
 TEST_F(WebRtcVideoChannelTest, VerifyMinBitrateWithForcedFallbackFieldTrial) {
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_,
       "WebRTC-VP8-Forced-Fallback-Encoder-v2/Enabled-1,2,34567/");
   std::vector<webrtc::VideoStream> streams = AddSendStream()->GetVideoStreams();
   ASSERT_EQ(1u, streams.size());
@@ -3783,9 +3817,8 @@ TEST_F(WebRtcVideoChannelTest, VerifyMinBitrateWithForcedFallbackFieldTrial) {
 
 TEST_F(WebRtcVideoChannelTest,
        BalancedDegradationPreferenceNotSupportedWithoutFieldtrial) {
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-Video-BalancedDegradation/Disabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-Video-BalancedDegradation/Disabled/");
   const bool kResolutionScalingEnabled = true;
   const bool kFpsScalingEnabled = false;
   TestDegradationPreference(kResolutionScalingEnabled, kFpsScalingEnabled);
@@ -3793,9 +3826,8 @@ TEST_F(WebRtcVideoChannelTest,
 
 TEST_F(WebRtcVideoChannelTest,
        BalancedDegradationPreferenceSupportedBehindFieldtrial) {
-  RTC_DCHECK(!override_field_trials_);
-  override_field_trials_ = std::make_unique<webrtc::test::ScopedFieldTrials>(
-      "WebRTC-Video-BalancedDegradation/Enabled/");
+  webrtc::test::ScopedKeyValueConfig override_field_trials(
+      field_trials_, "WebRTC-Video-BalancedDegradation/Enabled/");
   const bool kResolutionScalingEnabled = true;
   const bool kFpsScalingEnabled = true;
   TestDegradationPreference(kResolutionScalingEnabled, kFpsScalingEnabled);
@@ -3965,7 +3997,7 @@ TEST_F(WebRtcVideoChannelTest, EstimatesNtpStartTimeCorrectly) {
   // This timestamp is kInitialTimestamp (-1) + kFrameOffsetMs * 90, which
   // triggers a constant-overflow warning, hence we're calculating it explicitly
   // here.
-  fake_clock_.AdvanceTime(webrtc::TimeDelta::Millis(kFrameOffsetMs));
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Millis(kFrameOffsetMs));
   video_frame.set_timestamp(kFrameOffsetMs * 90 - 1);
   video_frame.set_ntp_time_ms(kInitialNtpTimeMs + kFrameOffsetMs);
   stream->InjectFrame(video_frame);
@@ -3985,7 +4017,7 @@ TEST_F(WebRtcVideoChannelTest, SetDefaultSendCodecs) {
 
   VideoCodec codec;
   EXPECT_TRUE(channel_->GetSendCodec(&codec));
-  EXPECT_TRUE(codec.Matches(engine_.send_codecs()[0]));
+  EXPECT_TRUE(codec.Matches(engine_.send_codecs()[0], &field_trials_));
 
   // Using a RTX setup to verify that the default RTX payload type is good.
   const std::vector<uint32_t> ssrcs = MAKE_VECTOR(kSsrcs1);
@@ -4092,7 +4124,7 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest, SetDefaultRecvCodecsWithoutSsrc) {
       fake_call_->GetVideoReceiveStreams();
   ASSERT_EQ(1U, video_streams.size());
   const FakeVideoReceiveStream& video_stream = *video_streams.front();
-  const webrtc::VideoReceiveStream::Config& video_config =
+  const webrtc::VideoReceiveStreamInterface::Config& video_config =
       video_stream.GetConfig();
   EXPECT_FALSE(video_config.rtp.protected_by_flexfec);
   EXPECT_EQ(video_config.rtp.packet_sink_, nullptr);
@@ -4105,10 +4137,10 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest, SetDefaultRecvCodecsWithSsrc) {
   const std::vector<FakeFlexfecReceiveStream*>& streams =
       fake_call_->GetFlexfecReceiveStreams();
   ASSERT_EQ(1U, streams.size());
-  const FakeFlexfecReceiveStream* stream = streams.front();
+  const auto* stream = streams.front();
   const webrtc::FlexfecReceiveStream::Config& config = stream->GetConfig();
   EXPECT_EQ(GetEngineCodec("flexfec-03").id, config.payload_type);
-  EXPECT_EQ(kFlexfecSsrc, config.remote_ssrc);
+  EXPECT_EQ(kFlexfecSsrc, config.rtp.remote_ssrc);
   ASSERT_EQ(1U, config.protected_media_ssrcs.size());
   EXPECT_EQ(kSsrcs1[0], config.protected_media_ssrcs[0]);
 
@@ -4116,17 +4148,18 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest, SetDefaultRecvCodecsWithSsrc) {
       fake_call_->GetVideoReceiveStreams();
   ASSERT_EQ(1U, video_streams.size());
   const FakeVideoReceiveStream& video_stream = *video_streams.front();
-  const webrtc::VideoReceiveStream::Config& video_config =
+  const webrtc::VideoReceiveStreamInterface::Config& video_config =
       video_stream.GetConfig();
   EXPECT_TRUE(video_config.rtp.protected_by_flexfec);
   EXPECT_NE(video_config.rtp.packet_sink_, nullptr);
 }
 
 // Test changing the configuration after a video stream has been created and
-// turn on flexfec. This will result in the video stream being recreated because
-// the flexfec stream pointer is injected to the video stream at construction.
+// turn on flexfec. This will result in video stream being reconfigured but not
+// recreated because the flexfec stream pointer will be given to the already
+// existing video stream instance.
 TEST_F(WebRtcVideoChannelFlexfecRecvTest,
-       EnablingFlexfecRecreatesVideoReceiveStream) {
+       EnablingFlexfecDoesNotRecreateVideoReceiveStream) {
   cricket::VideoRecvParameters recv_parameters;
   recv_parameters.codecs.push_back(GetEngineCodec("VP8"));
   ASSERT_TRUE(channel_->SetRecvParameters(recv_parameters));
@@ -4138,7 +4171,7 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest,
       fake_call_->GetVideoReceiveStreams();
   ASSERT_EQ(1U, video_streams.size());
   const FakeVideoReceiveStream* video_stream = video_streams.front();
-  const webrtc::VideoReceiveStream::Config* video_config =
+  const webrtc::VideoReceiveStreamInterface::Config* video_config =
       &video_stream->GetConfig();
   EXPECT_FALSE(video_config->rtp.protected_by_flexfec);
   EXPECT_EQ(video_config->rtp.packet_sink_, nullptr);
@@ -4147,13 +4180,13 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest,
   recv_parameters.codecs.push_back(GetEngineCodec("flexfec-03"));
   ASSERT_TRUE(channel_->SetRecvParameters(recv_parameters));
 
-  // Now the count of created streams will be 3 since the video stream was
-  // recreated and a flexfec stream was created.
-  EXPECT_EQ(3, fake_call_->GetNumCreatedReceiveStreams())
-      << "Enabling FlexFEC should create FlexfecReceiveStream.";
-
+  // The count of created streams will remain 2 despite the creation of a new
+  // flexfec stream. The existing receive stream will have been reconfigured
+  // to use the new flexfec instance.
+  EXPECT_EQ(2, fake_call_->GetNumCreatedReceiveStreams())
+      << "Enabling FlexFEC should not create VideoReceiveStreamInterface (1).";
   EXPECT_EQ(1U, fake_call_->GetVideoReceiveStreams().size())
-      << "Enabling FlexFEC should not create VideoReceiveStream.";
+      << "Enabling FlexFEC should not create VideoReceiveStreamInterface (2).";
   EXPECT_EQ(1U, fake_call_->GetFlexfecReceiveStreams().size())
       << "Enabling FlexFEC should create a single FlexfecReceiveStream.";
   video_stream = video_streams.front();
@@ -4163,11 +4196,11 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest,
 }
 
 // Test changing the configuration after a video stream has been created with
-// flexfec enabled and then turn off flexfec. This will result in the video
-// stream being recreated because the flexfec stream pointer is injected to the
-// video stream at construction and that config needs to be torn down.
+// flexfec enabled and then turn off flexfec. This will not result in the video
+// stream being recreated. The flexfec stream pointer that's held by the video
+// stream will be set/cleared as dictated by the configuration change.
 TEST_F(WebRtcVideoChannelFlexfecRecvTest,
-       DisablingFlexfecRecreatesVideoReceiveStream) {
+       DisablingFlexfecDoesNotRecreateVideoReceiveStream) {
   cricket::VideoRecvParameters recv_parameters;
   recv_parameters.codecs.push_back(GetEngineCodec("VP8"));
   recv_parameters.codecs.push_back(GetEngineCodec("flexfec-03"));
@@ -4181,7 +4214,7 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest,
       fake_call_->GetVideoReceiveStreams();
   ASSERT_EQ(1U, video_streams.size());
   const FakeVideoReceiveStream* video_stream = video_streams.front();
-  const webrtc::VideoReceiveStream::Config* video_config =
+  const webrtc::VideoReceiveStreamInterface::Config* video_config =
       &video_stream->GetConfig();
   EXPECT_TRUE(video_config->rtp.protected_by_flexfec);
   EXPECT_NE(video_config->rtp.packet_sink_, nullptr);
@@ -4190,12 +4223,13 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest,
   recv_parameters.codecs.clear();
   recv_parameters.codecs.push_back(GetEngineCodec("VP8"));
   ASSERT_TRUE(channel_->SetRecvParameters(recv_parameters));
-  // Now the count of created streams will be 3 since the video stream had to
-  // be recreated on account of the flexfec stream being deleted.
-  EXPECT_EQ(3, fake_call_->GetNumCreatedReceiveStreams())
-      << "Disabling FlexFEC should not recreate VideoReceiveStream.";
+  // The count of created streams should remain 2 since the video stream will
+  // have been reconfigured to not reference flexfec and not recreated on
+  // account of the flexfec stream being deleted.
+  EXPECT_EQ(2, fake_call_->GetNumCreatedReceiveStreams())
+      << "Disabling FlexFEC should not recreate VideoReceiveStreamInterface.";
   EXPECT_EQ(1U, fake_call_->GetVideoReceiveStreams().size())
-      << "Disabling FlexFEC should not destroy VideoReceiveStream.";
+      << "Disabling FlexFEC should not destroy VideoReceiveStreamInterface.";
   EXPECT_TRUE(fake_call_->GetFlexfecReceiveStreams().empty())
       << "Disabling FlexFEC should destroy FlexfecReceiveStream.";
   video_stream = video_streams.front();
@@ -4221,7 +4255,7 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest, DuplicateFlexfecCodecIsDropped) {
   const std::vector<FakeFlexfecReceiveStream*>& streams =
       fake_call_->GetFlexfecReceiveStreams();
   ASSERT_EQ(1U, streams.size());
-  const FakeFlexfecReceiveStream* stream = streams.front();
+  const auto* stream = streams.front();
   const webrtc::FlexfecReceiveStream::Config& config = stream->GetConfig();
   EXPECT_EQ(GetEngineCodec("flexfec-03").id, config.payload_type);
 }
@@ -4297,26 +4331,26 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest, SetRecvCodecsWithFec) {
       flexfec_stream->GetConfig();
   EXPECT_EQ(GetEngineCodec("flexfec-03").id,
             flexfec_stream_config.payload_type);
-  EXPECT_EQ(kFlexfecSsrc, flexfec_stream_config.remote_ssrc);
+  EXPECT_EQ(kFlexfecSsrc, flexfec_stream_config.rtp.remote_ssrc);
   ASSERT_EQ(1U, flexfec_stream_config.protected_media_ssrcs.size());
   EXPECT_EQ(kSsrcs1[0], flexfec_stream_config.protected_media_ssrcs[0]);
   const std::vector<FakeVideoReceiveStream*>& video_streams =
       fake_call_->GetVideoReceiveStreams();
   const FakeVideoReceiveStream* video_stream = video_streams.front();
-  const webrtc::VideoReceiveStream::Config& video_stream_config =
+  const webrtc::VideoReceiveStreamInterface::Config& video_stream_config =
       video_stream->GetConfig();
   EXPECT_EQ(video_stream_config.rtp.local_ssrc,
-            flexfec_stream_config.local_ssrc);
+            flexfec_stream_config.rtp.local_ssrc);
   EXPECT_EQ(video_stream_config.rtp.rtcp_mode, flexfec_stream_config.rtcp_mode);
   EXPECT_EQ(video_stream_config.rtcp_send_transport,
             flexfec_stream_config.rtcp_send_transport);
-  // TODO(brandtr): Update this EXPECT when we set |transport_cc| in a
+  // TODO(brandtr): Update this EXPECT when we set `transport_cc` in a
   // spec-compliant way.
   EXPECT_EQ(video_stream_config.rtp.transport_cc,
-            flexfec_stream_config.transport_cc);
+            flexfec_stream_config.rtp.transport_cc);
   EXPECT_EQ(video_stream_config.rtp.rtcp_mode, flexfec_stream_config.rtcp_mode);
   EXPECT_EQ(video_stream_config.rtp.extensions,
-            flexfec_stream_config.rtp_header_extensions);
+            flexfec_stream_config.rtp.extensions);
 }
 
 // We should not send FlexFEC, even if we advertise it, unless the right
@@ -4834,7 +4868,7 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsWithPacketization) {
   AddRecvStream(params);
   ASSERT_THAT(fake_call_->GetVideoReceiveStreams(), testing::SizeIs(1));
 
-  const webrtc::VideoReceiveStream::Config& config =
+  const webrtc::VideoReceiveStreamInterface::Config& config =
       fake_call_->GetVideoReceiveStreams()[0]->GetConfig();
   ASSERT_THAT(config.rtp.raw_payload_types, testing::SizeIs(1));
   EXPECT_EQ(config.rtp.raw_payload_types.count(vp8_codec.id), 1U);
@@ -4911,7 +4945,7 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsWithChangedRtxPayloadType) {
   parameters.codecs.push_back(rtx_codec);
   EXPECT_TRUE(channel_->SetRecvParameters(parameters));
   ASSERT_EQ(1U, fake_call_->GetVideoReceiveStreams().size());
-  const webrtc::VideoReceiveStream::Config& config_before =
+  const webrtc::VideoReceiveStreamInterface::Config& config_before =
       fake_call_->GetVideoReceiveStreams()[0]->GetConfig();
   EXPECT_EQ(1U, config_before.rtp.rtx_associated_payload_types.size());
   const int* payload_type_before = FindKeyByValue(
@@ -4924,7 +4958,7 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsWithChangedRtxPayloadType) {
   parameters.codecs[1].id = kUnusedPayloadType2;
   EXPECT_TRUE(channel_->SetRecvParameters(parameters));
   ASSERT_EQ(1U, fake_call_->GetVideoReceiveStreams().size());
-  const webrtc::VideoReceiveStream::Config& config_after =
+  const webrtc::VideoReceiveStreamInterface::Config& config_after =
       fake_call_->GetVideoReceiveStreams()[0]->GetConfig();
   EXPECT_EQ(1U, config_after.rtp.rtx_associated_payload_types.size());
   const int* payload_type_after = FindKeyByValue(
@@ -4954,7 +4988,7 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsRtxWithRtxTime) {
   parameters.codecs.push_back(rtx_codec);
   EXPECT_TRUE(channel_->SetRecvParameters(parameters));
   ASSERT_EQ(1U, fake_call_->GetVideoReceiveStreams().size());
-  const webrtc::VideoReceiveStream::Config& config =
+  const webrtc::VideoReceiveStreamInterface::Config& config =
       fake_call_->GetVideoReceiveStreams()[0]->GetConfig();
 
   const int kRtxTime = 343;
@@ -5017,7 +5051,8 @@ TEST_F(WebRtcVideoChannelTest, SetRecvCodecsAcceptDefaultCodecs) {
   EXPECT_TRUE(channel_->SetRecvParameters(parameters));
 
   FakeVideoReceiveStream* stream = AddRecvStream();
-  const webrtc::VideoReceiveStream::Config& config = stream->GetConfig();
+  const webrtc::VideoReceiveStreamInterface::Config& config =
+      stream->GetConfig();
   EXPECT_EQ(engine_.recv_codecs()[0].name,
             config.decoders[0].video_format.name);
   EXPECT_EQ(engine_.recv_codecs()[0].id, config.decoders[0].payload_type);
@@ -5067,7 +5102,7 @@ TEST_F(WebRtcVideoChannelFlexfecRecvTest, SetRecvParamsWithoutFecDisablesFec) {
   ASSERT_EQ(1U, streams.size());
   const FakeFlexfecReceiveStream* stream = streams.front();
   EXPECT_EQ(GetEngineCodec("flexfec-03").id, stream->GetConfig().payload_type);
-  EXPECT_EQ(kFlexfecSsrc, stream->GetConfig().remote_ssrc);
+  EXPECT_EQ(kFlexfecSsrc, stream->remote_ssrc());
   ASSERT_EQ(1U, stream->GetConfig().protected_media_ssrcs.size());
   EXPECT_EQ(kSsrcs1[0], stream->GetConfig().protected_media_ssrcs[0]);
 
@@ -5120,7 +5155,7 @@ TEST_F(WebRtcVideoChannelFlexfecSendRecvTest,
   const FakeFlexfecReceiveStream* stream_with_recv_params = streams.front();
   EXPECT_EQ(GetEngineCodec("flexfec-03").id,
             stream_with_recv_params->GetConfig().payload_type);
-  EXPECT_EQ(kFlexfecSsrc, stream_with_recv_params->GetConfig().remote_ssrc);
+  EXPECT_EQ(kFlexfecSsrc, stream_with_recv_params->GetConfig().rtp.remote_ssrc);
   EXPECT_EQ(1U,
             stream_with_recv_params->GetConfig().protected_media_ssrcs.size());
   EXPECT_EQ(kSsrcs1[0],
@@ -5134,7 +5169,7 @@ TEST_F(WebRtcVideoChannelFlexfecSendRecvTest,
   const FakeFlexfecReceiveStream* stream_with_send_params = streams.front();
   EXPECT_EQ(GetEngineCodec("flexfec-03").id,
             stream_with_send_params->GetConfig().payload_type);
-  EXPECT_EQ(kFlexfecSsrc, stream_with_send_params->GetConfig().remote_ssrc);
+  EXPECT_EQ(kFlexfecSsrc, stream_with_send_params->GetConfig().rtp.remote_ssrc);
   EXPECT_EQ(1U,
             stream_with_send_params->GetConfig().protected_media_ssrcs.size());
   EXPECT_EQ(kSsrcs1[0],
@@ -5240,6 +5275,7 @@ TEST_F(WebRtcVideoChannelTest, TestSetDscpOptions) {
   channel->SetInterface(network_interface.get());
   // Default value when DSCP is disabled should be DSCP_DEFAULT.
   EXPECT_EQ(rtc::DSCP_DEFAULT, network_interface->dscp());
+  channel->SetInterface(nullptr);
 
   // Default value when DSCP is enabled is also DSCP_DEFAULT, until it is set
   // through rtp parameters.
@@ -5269,6 +5305,7 @@ TEST_F(WebRtcVideoChannelTest, TestSetDscpOptions) {
   EXPECT_TRUE(static_cast<webrtc::Transport*>(channel.get())
                   ->SendRtcp(kData, sizeof(kData)));
   EXPECT_EQ(rtc::DSCP_CS1, network_interface->options().dscp);
+  channel->SetInterface(nullptr);
 
   // Verify that setting the option to false resets the
   // DiffServCodePoint.
@@ -5279,6 +5316,7 @@ TEST_F(WebRtcVideoChannelTest, TestSetDscpOptions) {
           video_bitrate_allocator_factory_.get())));
   channel->SetInterface(network_interface.get());
   EXPECT_EQ(rtc::DSCP_DEFAULT, network_interface->dscp());
+  channel->SetInterface(nullptr);
 }
 
 // This test verifies that the RTCP reduced size mode is properly applied to
@@ -5424,7 +5462,7 @@ TEST_F(WebRtcVideoChannelTest, GetStatsReportsPerLayerQpSum) {
 webrtc::VideoSendStream::Stats GetInitialisedStats() {
   webrtc::VideoSendStream::Stats stats;
   stats.encoder_implementation_name = "vp";
-  stats.input_frame_rate = 1;
+  stats.input_frame_rate = 1.0;
   stats.encode_frame_rate = 2;
   stats.avg_encode_time_ms = 3;
   stats.encode_usage_percent = 4;
@@ -5493,7 +5531,7 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportWithoutSubStreams) {
   // Comes from substream only.
   EXPECT_EQ(sender.firs_rcvd, 0);
   EXPECT_EQ(sender.plis_rcvd, 0);
-  EXPECT_EQ(sender.nacks_rcvd, 0);
+  EXPECT_EQ(sender.nacks_rcvd, 0u);
   EXPECT_EQ(sender.send_frame_width, 0);
   EXPECT_EQ(sender.send_frame_height, 0);
 
@@ -5518,7 +5556,7 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportWithoutSubStreams) {
   EXPECT_EQ(sender.total_encoded_bytes_target,
             stats.total_encoded_bytes_target);
   // Comes from substream only.
-  EXPECT_EQ(sender.total_packet_send_delay_ms, 0u);
+  EXPECT_EQ(sender.total_packet_send_delay, webrtc::TimeDelta::Zero());
   EXPECT_EQ(sender.qp_sum, absl::nullopt);
 
   EXPECT_EQ(sender.has_entered_low_resolution,
@@ -5545,7 +5583,8 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportForSubStreams) {
   substream.retransmit_bitrate_bps = 6;
   substream.avg_delay_ms = 7;
   substream.max_delay_ms = 8;
-  substream.total_packet_send_delay_ms = 9;
+  substream.rtp_stats.transmitted.total_packet_delay =
+      webrtc::TimeDelta::Millis(9);
   substream.rtp_stats.transmitted.header_bytes = 10;
   substream.rtp_stats.transmitted.padding_bytes = 11;
   substream.rtp_stats.retransmitted.payload_bytes = 12;
@@ -5553,9 +5592,11 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportForSubStreams) {
   substream.rtcp_packet_type_counts.fir_packets = 14;
   substream.rtcp_packet_type_counts.nack_packets = 15;
   substream.rtcp_packet_type_counts.pli_packets = 16;
-  substream.rtcp_stats.packets_lost = 17;
-  substream.rtcp_stats.fraction_lost = 18;
+  webrtc::RTCPReportBlock report_block;
+  report_block.packets_lost = 17;
+  report_block.fraction_lost = 18;
   webrtc::ReportBlockData report_block_data;
+  report_block_data.SetReportBlock(report_block, 0);
   report_block_data.AddRoundTripTimeSample(19);
   substream.report_block_data = report_block_data;
   substream.encode_frame_rate = 20.0;
@@ -5589,9 +5630,14 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportForSubStreams) {
             static_cast<int>(2 * substream.rtp_stats.transmitted.packets));
   EXPECT_EQ(sender.retransmitted_packets_sent,
             2u * substream.rtp_stats.retransmitted.packets);
-  EXPECT_EQ(sender.packets_lost, 2 * substream.rtcp_stats.packets_lost);
+  EXPECT_EQ(sender.total_packet_send_delay,
+            2 * substream.rtp_stats.transmitted.total_packet_delay);
+  EXPECT_EQ(sender.packets_lost,
+            2 * substream.report_block_data->report_block().packets_lost);
   EXPECT_EQ(sender.fraction_lost,
-            static_cast<float>(substream.rtcp_stats.fraction_lost) / (1 << 8));
+            static_cast<float>(
+                substream.report_block_data->report_block().fraction_lost) /
+                (1 << 8));
   EXPECT_EQ(sender.rtt_ms, 0);
   EXPECT_EQ(sender.codec_name, DefaultCodec().name);
   EXPECT_EQ(sender.codec_payload_type, DefaultCodec().id);
@@ -5612,9 +5658,8 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportForSubStreams) {
   EXPECT_EQ(
       sender.plis_rcvd,
       static_cast<int>(2 * substream.rtcp_packet_type_counts.pli_packets));
-  EXPECT_EQ(
-      sender.nacks_rcvd,
-      static_cast<int>(2 * substream.rtcp_packet_type_counts.nack_packets));
+  EXPECT_EQ(sender.nacks_rcvd,
+            2 * substream.rtcp_packet_type_counts.nack_packets);
   EXPECT_EQ(sender.send_frame_width, substream.width);
   EXPECT_EQ(sender.send_frame_height, substream.height);
 
@@ -5636,8 +5681,6 @@ TEST_F(WebRtcVideoChannelTest, GetAggregatedStatsReportForSubStreams) {
   EXPECT_EQ(sender.total_encode_time_ms, 2u * substream.total_encode_time_ms);
   EXPECT_EQ(sender.total_encoded_bytes_target,
             2u * substream.total_encoded_bytes_target);
-  EXPECT_EQ(sender.total_packet_send_delay_ms,
-            2u * substream.total_packet_send_delay_ms);
   EXPECT_EQ(sender.has_entered_low_resolution,
             stats.has_entered_low_resolution);
   EXPECT_EQ(sender.qp_sum, 2u * *substream.qp_sum);
@@ -5663,7 +5706,8 @@ TEST_F(WebRtcVideoChannelTest, GetPerLayerStatsReportForSubStreams) {
   substream.retransmit_bitrate_bps = 6;
   substream.avg_delay_ms = 7;
   substream.max_delay_ms = 8;
-  substream.total_packet_send_delay_ms = 9;
+  substream.rtp_stats.transmitted.total_packet_delay =
+      webrtc::TimeDelta::Millis(9);
   substream.rtp_stats.transmitted.header_bytes = 10;
   substream.rtp_stats.transmitted.padding_bytes = 11;
   substream.rtp_stats.retransmitted.payload_bytes = 12;
@@ -5671,9 +5715,11 @@ TEST_F(WebRtcVideoChannelTest, GetPerLayerStatsReportForSubStreams) {
   substream.rtcp_packet_type_counts.fir_packets = 14;
   substream.rtcp_packet_type_counts.nack_packets = 15;
   substream.rtcp_packet_type_counts.pli_packets = 16;
-  substream.rtcp_stats.packets_lost = 17;
-  substream.rtcp_stats.fraction_lost = 18;
+  webrtc::RTCPReportBlock report_block;
+  report_block.packets_lost = 17;
+  report_block.fraction_lost = 18;
   webrtc::ReportBlockData report_block_data;
+  report_block_data.SetReportBlock(report_block, 0);
   report_block_data.AddRoundTripTimeSample(19);
   substream.report_block_data = report_block_data;
   substream.encode_frame_rate = 20.0;
@@ -5705,11 +5751,16 @@ TEST_F(WebRtcVideoChannelTest, GetPerLayerStatsReportForSubStreams) {
             substream.rtp_stats.retransmitted.payload_bytes);
   EXPECT_EQ(sender.packets_sent,
             static_cast<int>(substream.rtp_stats.transmitted.packets));
+  EXPECT_EQ(sender.total_packet_send_delay,
+            substream.rtp_stats.transmitted.total_packet_delay);
   EXPECT_EQ(sender.retransmitted_packets_sent,
             substream.rtp_stats.retransmitted.packets);
-  EXPECT_EQ(sender.packets_lost, substream.rtcp_stats.packets_lost);
+  EXPECT_EQ(sender.packets_lost,
+            substream.report_block_data->report_block().packets_lost);
   EXPECT_EQ(sender.fraction_lost,
-            static_cast<float>(substream.rtcp_stats.fraction_lost) / (1 << 8));
+            static_cast<float>(
+                substream.report_block_data->report_block().fraction_lost) /
+                (1 << 8));
   EXPECT_EQ(sender.rtt_ms, 0);
   EXPECT_EQ(sender.codec_name, DefaultCodec().name);
   EXPECT_EQ(sender.codec_payload_type, DefaultCodec().id);
@@ -5728,8 +5779,7 @@ TEST_F(WebRtcVideoChannelTest, GetPerLayerStatsReportForSubStreams) {
             static_cast<int>(substream.rtcp_packet_type_counts.fir_packets));
   EXPECT_EQ(sender.plis_rcvd,
             static_cast<int>(substream.rtcp_packet_type_counts.pli_packets));
-  EXPECT_EQ(sender.nacks_rcvd,
-            static_cast<int>(substream.rtcp_packet_type_counts.nack_packets));
+  EXPECT_EQ(sender.nacks_rcvd, substream.rtcp_packet_type_counts.nack_packets);
   EXPECT_EQ(sender.send_frame_width, substream.width);
   EXPECT_EQ(sender.send_frame_height, substream.height);
 
@@ -5753,8 +5803,6 @@ TEST_F(WebRtcVideoChannelTest, GetPerLayerStatsReportForSubStreams) {
   EXPECT_EQ(sender.total_encode_time_ms, substream.total_encode_time_ms);
   EXPECT_EQ(sender.total_encoded_bytes_target,
             substream.total_encoded_bytes_target);
-  EXPECT_EQ(sender.total_packet_send_delay_ms,
-            substream.total_packet_send_delay_ms);
   EXPECT_EQ(sender.has_entered_low_resolution,
             stats.has_entered_low_resolution);
   EXPECT_EQ(sender.qp_sum, *substream.qp_sum);
@@ -6050,22 +6098,22 @@ TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesSendRtcpPacketTypesCorrectly) {
   cricket::VideoMediaInfo info;
   ASSERT_TRUE(channel_->GetStats(&info));
   EXPECT_EQ(2, info.senders[0].firs_rcvd);
-  EXPECT_EQ(3, info.senders[0].nacks_rcvd);
+  EXPECT_EQ(3u, info.senders[0].nacks_rcvd);
   EXPECT_EQ(4, info.senders[0].plis_rcvd);
 
   EXPECT_EQ(5, info.senders[1].firs_rcvd);
-  EXPECT_EQ(7, info.senders[1].nacks_rcvd);
+  EXPECT_EQ(7u, info.senders[1].nacks_rcvd);
   EXPECT_EQ(9, info.senders[1].plis_rcvd);
 
   EXPECT_EQ(7, info.aggregated_senders[0].firs_rcvd);
-  EXPECT_EQ(10, info.aggregated_senders[0].nacks_rcvd);
+  EXPECT_EQ(10u, info.aggregated_senders[0].nacks_rcvd);
   EXPECT_EQ(13, info.aggregated_senders[0].plis_rcvd);
 }
 
 TEST_F(WebRtcVideoChannelTest,
        GetStatsTranslatesReceiveRtcpPacketTypesCorrectly) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  webrtc::VideoReceiveStream::Stats stats;
+  webrtc::VideoReceiveStreamInterface::Stats stats;
   stats.rtcp_packet_type_counts.fir_packets = 2;
   stats.rtcp_packet_type_counts.nack_packets = 3;
   stats.rtcp_packet_type_counts.pli_packets = 4;
@@ -6076,14 +6124,14 @@ TEST_F(WebRtcVideoChannelTest,
   EXPECT_EQ(stats.rtcp_packet_type_counts.fir_packets,
             rtc::checked_cast<unsigned int>(info.receivers[0].firs_sent));
   EXPECT_EQ(stats.rtcp_packet_type_counts.nack_packets,
-            rtc::checked_cast<unsigned int>(info.receivers[0].nacks_sent));
+            info.receivers[0].nacks_sent);
   EXPECT_EQ(stats.rtcp_packet_type_counts.pli_packets,
             rtc::checked_cast<unsigned int>(info.receivers[0].plis_sent));
 }
 
 TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesDecodeStatsCorrectly) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  webrtc::VideoReceiveStream::Stats stats;
+  webrtc::VideoReceiveStreamInterface::Stats stats;
   stats.decoder_implementation_name = "decoder_implementation_name";
   stats.decode_ms = 2;
   stats.max_decode_ms = 3;
@@ -6101,7 +6149,9 @@ TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesDecodeStatsCorrectly) {
   stats.frames_rendered = 13;
   stats.frames_decoded = 14;
   stats.qp_sum = 15;
-  stats.total_decode_time_ms = 16;
+  stats.total_decode_time = webrtc::TimeDelta::Millis(16);
+  stats.total_assembly_time = webrtc::TimeDelta::Millis(4);
+  stats.frames_assembled_from_multiple_packets = 2;
   stream->SetStats(stats);
 
   cricket::VideoMediaInfo info;
@@ -6129,13 +6179,16 @@ TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesDecodeStatsCorrectly) {
   EXPECT_EQ(rtc::checked_cast<unsigned int>(stats.frame_counts.key_frames),
             info.receivers[0].key_frames_decoded);
   EXPECT_EQ(stats.qp_sum, info.receivers[0].qp_sum);
-  EXPECT_EQ(stats.total_decode_time_ms, info.receivers[0].total_decode_time_ms);
+  EXPECT_EQ(stats.total_decode_time, info.receivers[0].total_decode_time);
+  EXPECT_EQ(stats.total_assembly_time, info.receivers[0].total_assembly_time);
+  EXPECT_EQ(stats.frames_assembled_from_multiple_packets,
+            info.receivers[0].frames_assembled_from_multiple_packets);
 }
 
 TEST_F(WebRtcVideoChannelTest,
        GetStatsTranslatesInterFrameDelayStatsCorrectly) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  webrtc::VideoReceiveStream::Stats stats;
+  webrtc::VideoReceiveStreamInterface::Stats stats;
   stats.total_inter_frame_delay = 0.123;
   stats.total_squared_inter_frame_delay = 0.00456;
   stream->SetStats(stats);
@@ -6150,7 +6203,7 @@ TEST_F(WebRtcVideoChannelTest,
 
 TEST_F(WebRtcVideoChannelTest, GetStatsTranslatesReceivePacketStatsCorrectly) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  webrtc::VideoReceiveStream::Stats stats;
+  webrtc::VideoReceiveStreamInterface::Stats stats;
   stats.rtp_stats.packet_counter.payload_bytes = 2;
   stats.rtp_stats.packet_counter.header_bytes = 3;
   stats.rtp_stats.packet_counter.padding_bytes = 4;
@@ -6231,13 +6284,9 @@ TEST_F(WebRtcVideoChannelTest, DefaultReceiveStreamReconfiguresToUseRtx) {
   const std::vector<uint32_t> rtx_ssrcs = MAKE_VECTOR(kRtxSsrcs1);
 
   ASSERT_EQ(0u, fake_call_->GetVideoReceiveStreams().size());
-  const size_t kDataLength = 12;
-  uint8_t data[kDataLength];
-  memset(data, 0, sizeof(data));
-  rtc::SetBE32(&data[8], ssrcs[0]);
-  rtc::CopyOnWriteBuffer packet(data, kDataLength);
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket packet;
+  packet.SetSsrc(ssrcs[0]);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
 
   ASSERT_EQ(1u, fake_call_->GetVideoReceiveStreams().size())
       << "No default receive stream created.";
@@ -6356,7 +6405,7 @@ TEST_F(WebRtcVideoChannelTest, ReportsSsrcGroupsInStats) {
 
 TEST_F(WebRtcVideoChannelTest, MapsReceivedPayloadTypeToCodecName) {
   FakeVideoReceiveStream* stream = AddRecvStream();
-  webrtc::VideoReceiveStream::Stats stats;
+  webrtc::VideoReceiveStreamInterface::Stats stats;
   cricket::VideoMediaInfo info;
 
   // Report no codec name before receiving.
@@ -6393,13 +6442,9 @@ TEST_F(WebRtcVideoChannelTest, RecvUnsignaledSsrcWithSignaledStreamId) {
   EXPECT_EQ(0u, fake_call_->GetVideoReceiveStreams().size());
 
   // Create and deliver packet.
-  const size_t kDataLength = 12;
-  uint8_t data[kDataLength];
-  memset(data, 0, sizeof(data));
-  rtc::SetBE32(&data[8], kIncomingUnsignalledSsrc);
-  rtc::CopyOnWriteBuffer packet(data, kDataLength);
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket packet;
+  packet.SetSsrc(kIncomingUnsignalledSsrc);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
 
   // The stream should now be created with the appropriate sync label.
   EXPECT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
@@ -6414,16 +6459,14 @@ TEST_F(WebRtcVideoChannelTest, RecvUnsignaledSsrcWithSignaledStreamId) {
 
   // Until the demuxer criteria has been updated, we ignore in-flight ssrcs of
   // the recently removed unsignaled receive stream.
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   EXPECT_EQ(0u, fake_call_->GetVideoReceiveStreams().size());
 
   // After the demuxer criteria has been updated, we should proceed to create
   // unsignalled receive streams. This time when a default video receive stream
   // is created it won't have a sync_group.
   channel_->OnDemuxerCriteriaUpdateComplete();
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   EXPECT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
   EXPECT_TRUE(
       fake_call_->GetVideoReceiveStreams()[0]->GetConfig().sync_group.empty());
@@ -6435,13 +6478,9 @@ TEST_F(WebRtcVideoChannelTest,
   EXPECT_TRUE(fake_call_->GetVideoReceiveStreams().empty());
 
   // Packet with unsignaled SSRC is received.
-  const size_t kDataLength = 12;
-  uint8_t data[kDataLength];
-  memset(data, 0, sizeof(data));
-  rtc::SetBE32(&data[8], kIncomingUnsignalledSsrc);
-  rtc::CopyOnWriteBuffer packet(data, kDataLength);
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket packet;
+  packet.SetSsrc(kIncomingUnsignalledSsrc);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
 
   // Default receive stream created.
   const auto& receivers1 = fake_call_->GetVideoReceiveStreams();
@@ -6486,23 +6525,16 @@ TEST_F(WebRtcVideoChannelTest,
   // the demuxer is updated.
   {
     // Receive a packet for kSsrc1.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc1);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc1);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
   {
     // Receive a packet for kSsrc2.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc2);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc2);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
 
   // No unsignaled ssrc for kSsrc2 should have been created, but kSsrc1 should
   // arrive since it already has a stream.
@@ -6519,23 +6551,16 @@ TEST_F(WebRtcVideoChannelTest,
   // Receive packets for kSsrc1 and kSsrc2 again.
   {
     // Receive a packet for kSsrc1.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc1);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc1);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
   {
     // Receive a packet for kSsrc2.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc2);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc2);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
 
   // An unsignalled ssrc for kSsrc2 should be created and the packet counter
   // should increase for both ssrcs.
@@ -6571,23 +6596,16 @@ TEST_F(WebRtcVideoChannelTest,
   // the demuxer is updated.
   {
     // Receive a packet for kSsrc1.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc1);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc1);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
   {
     // Receive a packet for kSsrc2.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc2);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc2);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
 
   // No unsignaled ssrc for kSsrc1 should have been created, but the packet
   // count for kSsrc2 should increase.
@@ -6603,23 +6621,16 @@ TEST_F(WebRtcVideoChannelTest,
   // Receive packets for kSsrc1 and kSsrc2 again.
   {
     // Receive a packet for kSsrc1.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc1);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc1);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
   {
     // Receive a packet for kSsrc2.
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc2);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc2);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
 
   // An unsignalled ssrc for kSsrc1 should be created and the packet counter
   // should increase for both ssrcs.
@@ -6651,14 +6662,10 @@ TEST_F(WebRtcVideoChannelTest, MultiplePendingDemuxerCriteriaUpdates) {
   // In-flight packets should arrive because the stream was recreated, even
   // though demuxer criteria updates are pending...
   {
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
   EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc), 1u);
 
   // Signal that the demuxer knows about the first update: the removal.
@@ -6668,14 +6675,10 @@ TEST_F(WebRtcVideoChannelTest, MultiplePendingDemuxerCriteriaUpdates) {
   // This still should not prevent in-flight packets from arriving because we
   // have a receive stream for it.
   {
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
   EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc), 2u);
 
   // Remove the kSsrc again while previous demuxer updates are still pending.
@@ -6686,14 +6689,10 @@ TEST_F(WebRtcVideoChannelTest, MultiplePendingDemuxerCriteriaUpdates) {
   // Now the packet should be dropped and not create an unsignalled receive
   // stream.
   {
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
   EXPECT_EQ(fake_call_->GetVideoReceiveStreams().size(), 0u);
   EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc), 2u);
 
@@ -6704,14 +6703,10 @@ TEST_F(WebRtcVideoChannelTest, MultiplePendingDemuxerCriteriaUpdates) {
   // The packets should continue to be dropped because removal happened after
   // the most recently completed demuxer update.
   {
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
   EXPECT_EQ(fake_call_->GetVideoReceiveStreams().size(), 0u);
   EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc), 2u);
 
@@ -6722,16 +6717,65 @@ TEST_F(WebRtcVideoChannelTest, MultiplePendingDemuxerCriteriaUpdates) {
   // If packets still arrive after the demuxer knows about the latest removal we
   // should finally create an unsignalled receive stream.
   {
-    const size_t kDataLength = 12;
-    uint8_t data[kDataLength];
-    memset(data, 0, sizeof(data));
-    rtc::SetBE32(&data[8], kSsrc);
-    rtc::CopyOnWriteBuffer packet(data, kDataLength);
-    channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc);
+    ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
   }
-  rtc::Thread::Current()->ProcessMessages(0);
   EXPECT_EQ(fake_call_->GetVideoReceiveStreams().size(), 1u);
   EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc), 3u);
+}
+
+TEST_F(WebRtcVideoChannelTest, UnsignalledSsrcHasACooldown) {
+  const uint32_t kSsrc1 = 1;
+  const uint32_t kSsrc2 = 2;
+
+  // Send packets for kSsrc1, creating an unsignalled receive stream.
+  {
+    // Receive a packet for kSsrc1.
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc1);
+    channel_->OnPacketReceived(packet.Buffer(), /* packet_time_us */ -1);
+  }
+  rtc::Thread::Current()->ProcessMessages(0);
+  time_controller_.AdvanceTime(
+      webrtc::TimeDelta::Millis(kUnsignalledReceiveStreamCooldownMs - 1));
+
+  // We now have an unsignalled receive stream for kSsrc1.
+  EXPECT_EQ(fake_call_->GetVideoReceiveStreams().size(), 1u);
+  EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc1), 1u);
+  EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc2), 0u);
+
+  {
+    // Receive a packet for kSsrc2.
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc2);
+    channel_->OnPacketReceived(packet.Buffer(), /* packet_time_us */ -1);
+  }
+  rtc::Thread::Current()->ProcessMessages(0);
+
+  // Not enough time has passed to replace the unsignalled receive stream, so
+  // the kSsrc2 should be ignored.
+  EXPECT_EQ(fake_call_->GetVideoReceiveStreams().size(), 1u);
+  EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc1), 1u);
+  EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc2), 0u);
+
+  // After 500 ms, kSsrc2 should trigger a new unsignalled receive stream that
+  // replaces the old one.
+  time_controller_.AdvanceTime(webrtc::TimeDelta::Millis(1));
+  {
+    // Receive a packet for kSsrc2.
+    RtpPacket packet;
+    packet.SetSsrc(kSsrc2);
+    channel_->OnPacketReceived(packet.Buffer(), /* packet_time_us */ -1);
+  }
+  rtc::Thread::Current()->ProcessMessages(0);
+
+  // The old unsignalled receive stream was destroyed and replaced, so we still
+  // only have one unsignalled receive stream. But tha packet counter for kSsrc2
+  // has now increased.
+  EXPECT_EQ(fake_call_->GetVideoReceiveStreams().size(), 1u);
+  EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc1), 1u);
+  EXPECT_EQ(fake_call_->GetDeliveredPacketsForSsrc(kSsrc2), 1u);
 }
 
 // Test BaseMinimumPlayoutDelayMs on receive streams.
@@ -6762,13 +6806,9 @@ TEST_F(WebRtcVideoChannelTest, BaseMinimumPlayoutDelayMsUnsignaledRecvStream) {
 
   // Spawn an unsignaled stream by sending a packet, it should inherit
   // default delay 200.
-  const size_t kDataLength = 12;
-  uint8_t data[kDataLength];
-  memset(data, 0, sizeof(data));
-  rtc::SetBE32(&data[8], kIncomingUnsignalledSsrc);
-  rtc::CopyOnWriteBuffer packet(data, kDataLength);
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket packet;
+  packet.SetSsrc(kIncomingUnsignalledSsrc);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
 
   recv_stream = fake_call_->GetVideoReceiveStream(kIncomingUnsignalledSsrc);
   EXPECT_EQ(recv_stream->base_mininum_playout_delay_ms(), 200);
@@ -6798,15 +6838,10 @@ void WebRtcVideoChannelTest::TestReceiveUnsignaledSsrcPacket(
   EXPECT_TRUE(channel_->SetRecvParameters(recv_parameters_));
 
   ASSERT_EQ(0u, fake_call_->GetVideoReceiveStreams().size());
-  const size_t kDataLength = 12;
-  uint8_t data[kDataLength];
-  memset(data, 0, sizeof(data));
-
-  rtc::Set8(data, 1, payload_type);
-  rtc::SetBE32(&data[8], kIncomingUnsignalledSsrc);
-  rtc::CopyOnWriteBuffer packet(data, kDataLength);
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket packet;
+  packet.SetPayloadType(payload_type);
+  packet.SetSsrc(kIncomingUnsignalledSsrc);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
 
   if (expect_created_receive_stream) {
     EXPECT_EQ(1u, fake_call_->GetVideoReceiveStreams().size())
@@ -6865,6 +6900,41 @@ TEST_F(WebRtcVideoChannelTest, RedRtxPacketDoesntCreateUnsignalledStream) {
                                   false /* expect_created_receive_stream */);
 }
 
+TEST_F(WebRtcVideoChannelTest,
+       RtxAfterMediaPacketRecreatesUnsignalledStream) {
+  AssignDefaultAptRtxTypes();
+  const cricket::VideoCodec vp8 = GetEngineCodec("VP8");
+  const int payload_type = vp8.id;
+  const int rtx_vp8_payload_type = default_apt_rtx_types_[vp8.id];
+  const uint32_t ssrc = kIncomingUnsignalledSsrc;
+  const uint32_t rtx_ssrc = ssrc + 1;
+
+  // Send media packet.
+  RtpPacket packet;
+  packet.SetPayloadType(payload_type);
+  packet.SetSsrc(ssrc);
+  ReceivePacketAndAdvanceTime(packet.Buffer(), /* packet_time_us */ -1);
+  EXPECT_EQ(1u, fake_call_->GetVideoReceiveStreams().size())
+      << "Should have created a receive stream for payload type: "
+      << payload_type;
+
+  // Send rtx packet.
+  RtpPacket rtx_packet;
+  rtx_packet.SetPayloadType(rtx_vp8_payload_type);
+  rtx_packet.SetSsrc(rtx_ssrc);
+  ReceivePacketAndAdvanceTime(rtx_packet.Buffer(), /* packet_time_us */ -1);
+  EXPECT_EQ(1u, fake_call_->GetVideoReceiveStreams().size())
+      << "RTX packet should not have added or removed a receive stream";
+
+  // Check receive stream has been recreated with correct ssrcs.
+  auto recv_stream = fake_call_->GetVideoReceiveStreams().front();
+  auto& config = recv_stream->GetConfig();
+  EXPECT_EQ(config.rtp.remote_ssrc, ssrc)
+      << "Receive stream should have correct media ssrc";
+  EXPECT_EQ(config.rtp.rtx_ssrc, rtx_ssrc)
+      << "Receive stream should have correct rtx ssrc";
+}
+
 // Test that receiving any unsignalled SSRC works even if it changes.
 // The first unsignalled SSRC received will create a default receive stream.
 // Any different unsignalled SSRC received will replace the default.
@@ -6886,19 +6956,14 @@ TEST_F(WebRtcVideoChannelTest, ReceiveDifferentUnsignaledSsrc) {
   channel_->SetDefaultSink(&renderer);
 
   // Receive VP8 packet on first SSRC.
-  uint8_t data[kMinRtpPacketLen];
-  cricket::RtpHeader rtpHeader;
-  rtpHeader.payload_type = GetEngineCodec("VP8").id;
-  rtpHeader.seq_num = rtpHeader.timestamp = 0;
-  rtpHeader.ssrc = kIncomingUnsignalledSsrc + 1;
-  cricket::SetRtpHeader(data, sizeof(data), rtpHeader);
-  rtc::CopyOnWriteBuffer packet(data, sizeof(data));
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket rtp_packet;
+  rtp_packet.SetPayloadType(GetEngineCodec("VP8").id);
+  rtp_packet.SetSsrc(kIncomingUnsignalledSsrc + 1);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
   // VP8 packet should create default receive stream.
   ASSERT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
   FakeVideoReceiveStream* recv_stream = fake_call_->GetVideoReceiveStreams()[0];
-  EXPECT_EQ(rtpHeader.ssrc, recv_stream->GetConfig().rtp.remote_ssrc);
+  EXPECT_EQ(rtp_packet.Ssrc(), recv_stream->GetConfig().rtp.remote_ssrc);
   // Verify that the receive stream sinks to a renderer.
   webrtc::VideoFrame video_frame =
       webrtc::VideoFrame::Builder()
@@ -6911,16 +6976,13 @@ TEST_F(WebRtcVideoChannelTest, ReceiveDifferentUnsignaledSsrc) {
   EXPECT_EQ(1, renderer.num_rendered_frames());
 
   // Receive VP9 packet on second SSRC.
-  rtpHeader.payload_type = GetEngineCodec("VP9").id;
-  rtpHeader.ssrc = kIncomingUnsignalledSsrc + 2;
-  cricket::SetRtpHeader(data, sizeof(data), rtpHeader);
-  rtc::CopyOnWriteBuffer packet2(data, sizeof(data));
-  channel_->OnPacketReceived(packet2, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  rtp_packet.SetPayloadType(GetEngineCodec("VP9").id);
+  rtp_packet.SetSsrc(kIncomingUnsignalledSsrc + 2);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
   // VP9 packet should replace the default receive SSRC.
   ASSERT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
   recv_stream = fake_call_->GetVideoReceiveStreams()[0];
-  EXPECT_EQ(rtpHeader.ssrc, recv_stream->GetConfig().rtp.remote_ssrc);
+  EXPECT_EQ(rtp_packet.Ssrc(), recv_stream->GetConfig().rtp.remote_ssrc);
   // Verify that the receive stream sinks to a renderer.
   webrtc::VideoFrame video_frame2 =
       webrtc::VideoFrame::Builder()
@@ -6934,16 +6996,13 @@ TEST_F(WebRtcVideoChannelTest, ReceiveDifferentUnsignaledSsrc) {
 
 #if defined(WEBRTC_USE_H264)
   // Receive H264 packet on third SSRC.
-  rtpHeader.payload_type = 126;
-  rtpHeader.ssrc = kIncomingUnsignalledSsrc + 3;
-  cricket::SetRtpHeader(data, sizeof(data), rtpHeader);
-  rtc::CopyOnWriteBuffer packet3(data, sizeof(data));
-  channel_->OnPacketReceived(packet3, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  rtp_packet.SetPayloadType(126);
+  rtp_packet.SetSsrc(kIncomingUnsignalledSsrc + 3);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
   // H264 packet should replace the default receive SSRC.
   ASSERT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
   recv_stream = fake_call_->GetVideoReceiveStreams()[0];
-  EXPECT_EQ(rtpHeader.ssrc, recv_stream->GetConfig().rtp.remote_ssrc);
+  EXPECT_EQ(rtp_packet.Ssrc(), recv_stream->GetConfig().rtp.remote_ssrc);
   // Verify that the receive stream sinks to a renderer.
   webrtc::VideoFrame video_frame3 =
       webrtc::VideoFrame::Builder()
@@ -6971,15 +7030,10 @@ TEST_F(WebRtcVideoChannelTest,
   EXPECT_EQ(0u, fake_call_->GetVideoReceiveStreams().size());
 
   // Receive packet on an unsignaled SSRC.
-  uint8_t data[kMinRtpPacketLen];
-  cricket::RtpHeader rtp_header;
-  rtp_header.payload_type = GetEngineCodec("VP8").id;
-  rtp_header.seq_num = rtp_header.timestamp = 0;
-  rtp_header.ssrc = kSsrcs3[0];
-  cricket::SetRtpHeader(data, sizeof(data), rtp_header);
-  rtc::CopyOnWriteBuffer packet(data, sizeof(data));
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket rtp_packet;
+  rtp_packet.SetPayloadType(GetEngineCodec("VP8").id);
+  rtp_packet.SetSsrc(kSsrcs3[0]);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
   // Default receive stream should be created.
   ASSERT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
   FakeVideoReceiveStream* recv_stream0 =
@@ -6994,11 +7048,8 @@ TEST_F(WebRtcVideoChannelTest,
   EXPECT_EQ(kSsrcs3[0], recv_stream0->GetConfig().rtp.remote_ssrc);
 
   // Receive packet on a different unsignaled SSRC.
-  rtp_header.ssrc = kSsrcs3[1];
-  cricket::SetRtpHeader(data, sizeof(data), rtp_header);
-  packet.SetData(data, sizeof(data));
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  rtp_packet.SetSsrc(kSsrcs3[1]);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
   // New default receive stream should be created, but old stream should remain.
   ASSERT_EQ(2u, fake_call_->GetVideoReceiveStreams().size());
   EXPECT_EQ(recv_stream0, fake_call_->GetVideoReceiveStreams()[0]);
@@ -7432,8 +7483,8 @@ TEST_F(WebRtcVideoChannelTest,
   // so that the bottom layer has width and height divisible by 2.
   // TODO(bugs.webrtc.org/8785): Remove this field trial when we fully trust
   // the number of simulcast layers set by the app.
-  webrtc::test::ScopedFieldTrials field_trial(
-      "WebRTC-NormalizeSimulcastResolution/Enabled-3/");
+  webrtc::test::ScopedKeyValueConfig field_trial(
+      field_trials_, "WebRTC-NormalizeSimulcastResolution/Enabled-3/");
 
   // Set up WebRtcVideoChannel for 3-layer VP8 simulcast.
   VideoSendParameters parameters;
@@ -7445,7 +7496,7 @@ TEST_F(WebRtcVideoChannelTest,
                                      &frame_forwarder));
   channel_->SetSend(true);
 
-  // Set |scale_resolution_down_by|'s.
+  // Set `scale_resolution_down_by`'s.
   auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
   ASSERT_EQ(rtp_parameters.encodings.size(), 3u);
   rtp_parameters.encodings[0].scale_resolution_down_by = 1.0;
@@ -7587,8 +7638,8 @@ TEST_F(WebRtcVideoChannelTest,
   // so that the bottom layer has width and height divisible by 2.
   // TODO(bugs.webrtc.org/8785): Remove this field trial when we fully trust
   // the number of simulcast layers set by the app.
-  webrtc::test::ScopedFieldTrials field_trial(
-      "WebRTC-NormalizeSimulcastResolution/Enabled-3/");
+  webrtc::test::ScopedKeyValueConfig field_trial(
+      field_trials_, "WebRTC-NormalizeSimulcastResolution/Enabled-3/");
 
   // Set up WebRtcVideoChannel for 3-layer H264 simulcast.
   encoder_factory_->AddSupportedVideoCodecType(kH264CodecName);
@@ -7601,7 +7652,7 @@ TEST_F(WebRtcVideoChannelTest,
                                      &frame_forwarder));
   channel_->SetSend(true);
 
-  // Set |scale_resolution_down_by|'s.
+  // Set `scale_resolution_down_by`'s.
   auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
   ASSERT_EQ(rtp_parameters.encodings.size(), 3u);
   rtp_parameters.encodings[0].scale_resolution_down_by = 1.0;
@@ -7675,28 +7726,6 @@ TEST_F(WebRtcVideoChannelTest,
             channel_->SetRtpSendParameters(last_ssrc_, parameters).type());
 }
 
-TEST_F(WebRtcVideoChannelTest,
-       SetRtpSendParametersNumTemporalLayersFailsForInvalidModification) {
-  const size_t kNumSimulcastStreams = 3;
-  SetUpSimulcast(true, false);
-
-  // Get and set the rtp encoding parameters.
-  webrtc::RtpParameters parameters = channel_->GetRtpSendParameters(last_ssrc_);
-  EXPECT_EQ(kNumSimulcastStreams, parameters.encodings.size());
-
-  // No/all layers should be set.
-  parameters.encodings[0].num_temporal_layers = 1;
-  EXPECT_EQ(webrtc::RTCErrorType::INVALID_MODIFICATION,
-            channel_->SetRtpSendParameters(last_ssrc_, parameters).type());
-
-  // Different values not supported.
-  parameters.encodings[0].num_temporal_layers = 1;
-  parameters.encodings[1].num_temporal_layers = 2;
-  parameters.encodings[2].num_temporal_layers = 2;
-  EXPECT_EQ(webrtc::RTCErrorType::INVALID_MODIFICATION,
-            channel_->SetRtpSendParameters(last_ssrc_, parameters).type());
-}
-
 TEST_F(WebRtcVideoChannelTest, GetAndSetRtpSendParametersNumTemporalLayers) {
   const size_t kNumSimulcastStreams = 3;
   SetUpSimulcast(true, false);
@@ -7736,9 +7765,9 @@ TEST_F(WebRtcVideoChannelTest, NumTemporalLayersPropagatedToEncoder) {
   // Change the value and set it on the VideoChannel.
   webrtc::RtpParameters parameters = channel_->GetRtpSendParameters(last_ssrc_);
   EXPECT_EQ(kNumSimulcastStreams, parameters.encodings.size());
-  parameters.encodings[0].num_temporal_layers = 2;
+  parameters.encodings[0].num_temporal_layers = 3;
   parameters.encodings[1].num_temporal_layers = 2;
-  parameters.encodings[2].num_temporal_layers = 2;
+  parameters.encodings[2].num_temporal_layers = 1;
   EXPECT_TRUE(channel_->SetRtpSendParameters(last_ssrc_, parameters).ok());
 
   // Verify that the new value is propagated down to the encoder.
@@ -7747,16 +7776,16 @@ TEST_F(WebRtcVideoChannelTest, NumTemporalLayersPropagatedToEncoder) {
   webrtc::VideoEncoderConfig encoder_config = stream->GetEncoderConfig().Copy();
   EXPECT_EQ(kNumSimulcastStreams, encoder_config.number_of_streams);
   EXPECT_EQ(kNumSimulcastStreams, encoder_config.simulcast_layers.size());
-  EXPECT_EQ(2UL, encoder_config.simulcast_layers[0].num_temporal_layers);
+  EXPECT_EQ(3UL, encoder_config.simulcast_layers[0].num_temporal_layers);
   EXPECT_EQ(2UL, encoder_config.simulcast_layers[1].num_temporal_layers);
-  EXPECT_EQ(2UL, encoder_config.simulcast_layers[2].num_temporal_layers);
+  EXPECT_EQ(1UL, encoder_config.simulcast_layers[2].num_temporal_layers);
 
   // FakeVideoSendStream calls CreateEncoderStreams, test that the vector of
   // VideoStreams are created appropriately for the simulcast case.
   EXPECT_EQ(kNumSimulcastStreams, stream->GetVideoStreams().size());
-  EXPECT_EQ(2UL, stream->GetVideoStreams()[0].num_temporal_layers);
+  EXPECT_EQ(3UL, stream->GetVideoStreams()[0].num_temporal_layers);
   EXPECT_EQ(2UL, stream->GetVideoStreams()[1].num_temporal_layers);
-  EXPECT_EQ(2UL, stream->GetVideoStreams()[2].num_temporal_layers);
+  EXPECT_EQ(1UL, stream->GetVideoStreams()[2].num_temporal_layers);
 
   // No parameter changed, encoder should not be reconfigured.
   EXPECT_TRUE(channel_->SetRtpSendParameters(last_ssrc_, parameters).ok());
@@ -7778,29 +7807,28 @@ TEST_F(WebRtcVideoChannelTest,
   channel_->SetSend(true);
   frame_forwarder.IncomingCapturedFrame(frame_source_.GetFrame());
 
-  // Change rtp encoding parameters, num_temporal_layers not changed.
+  // Change rtp encoding parameters.
   webrtc::RtpParameters parameters = channel_->GetRtpSendParameters(last_ssrc_);
   EXPECT_EQ(kNumSimulcastStreams, parameters.encodings.size());
-  parameters.encodings[0].min_bitrate_bps = 33000;
+  parameters.encodings[0].num_temporal_layers = 2;
+  parameters.encodings[2].num_temporal_layers = 1;
   EXPECT_TRUE(channel_->SetRtpSendParameters(last_ssrc_, parameters).ok());
 
   // Verify that no value is propagated down to the encoder.
   webrtc::VideoEncoderConfig encoder_config = stream->GetEncoderConfig().Copy();
   EXPECT_EQ(kNumSimulcastStreams, encoder_config.number_of_streams);
   EXPECT_EQ(kNumSimulcastStreams, encoder_config.simulcast_layers.size());
-  EXPECT_FALSE(encoder_config.simulcast_layers[0].num_temporal_layers);
+  EXPECT_EQ(2UL, encoder_config.simulcast_layers[0].num_temporal_layers);
   EXPECT_FALSE(encoder_config.simulcast_layers[1].num_temporal_layers);
-  EXPECT_FALSE(encoder_config.simulcast_layers[2].num_temporal_layers);
+  EXPECT_EQ(1UL, encoder_config.simulcast_layers[2].num_temporal_layers);
 
   // FakeVideoSendStream calls CreateEncoderStreams, test that the vector of
   // VideoStreams are created appropriately for the simulcast case.
   EXPECT_EQ(kNumSimulcastStreams, stream->GetVideoStreams().size());
-  EXPECT_EQ(kDefaultNumTemporalLayers,
-            stream->GetVideoStreams()[0].num_temporal_layers);
+  EXPECT_EQ(2UL, stream->GetVideoStreams()[0].num_temporal_layers);
   EXPECT_EQ(kDefaultNumTemporalLayers,
             stream->GetVideoStreams()[1].num_temporal_layers);
-  EXPECT_EQ(kDefaultNumTemporalLayers,
-            stream->GetVideoStreams()[2].num_temporal_layers);
+  EXPECT_EQ(1UL, stream->GetVideoStreams()[2].num_temporal_layers);
 
   EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
 }
@@ -7837,7 +7865,7 @@ TEST_F(WebRtcVideoChannelTest,
 
   // FakeVideoSendStream calls CreateEncoderStreams, test that the vector of
   // VideoStreams are created appropriately for the simulcast case.
-  // The maximum |max_framerate| is used, kDefaultVideoMaxFramerate: 60.
+  // The maximum `max_framerate` is used, kDefaultVideoMaxFramerate: 60.
   EXPECT_EQ(kNumSimulcastStreams, stream->GetVideoStreams().size());
   EXPECT_EQ(15, stream->GetVideoStreams()[0].max_framerate);
   EXPECT_EQ(kDefaultVideoMaxFramerate,
@@ -8527,7 +8555,8 @@ TEST_F(WebRtcVideoChannelTest, DISABLED_GetRtpReceiveFmtpSprop) {
   EXPECT_TRUE(channel_->SetRecvParameters(parameters));
 
   FakeVideoReceiveStream* recv_stream = AddRecvStream();
-  const webrtc::VideoReceiveStream::Config& cfg = recv_stream->GetConfig();
+  const webrtc::VideoReceiveStreamInterface::Config& cfg =
+      recv_stream->GetConfig();
   webrtc::RtpParameters rtp_parameters =
       channel_->GetRtpReceiveParameters(last_ssrc_);
   ASSERT_EQ(2u, rtp_parameters.codecs.size());
@@ -8604,20 +8633,33 @@ TEST_F(WebRtcVideoChannelTest,
   EXPECT_FALSE(rtp_parameters.encodings[0].ssrc);
 
   // Receive VP8 packet.
-  uint8_t data[kMinRtpPacketLen];
-  cricket::RtpHeader rtpHeader;
-  rtpHeader.payload_type = GetEngineCodec("VP8").id;
-  rtpHeader.seq_num = rtpHeader.timestamp = 0;
-  rtpHeader.ssrc = kIncomingUnsignalledSsrc;
-  cricket::SetRtpHeader(data, sizeof(data), rtpHeader);
-  rtc::CopyOnWriteBuffer packet(data, sizeof(data));
-  channel_->OnPacketReceived(packet, /* packet_time_us */ -1);
-  rtc::Thread::Current()->ProcessMessages(0);
+  RtpPacket rtp_packet;
+  rtp_packet.SetPayloadType(GetEngineCodec("VP8").id);
+  rtp_packet.SetSsrc(kIncomingUnsignalledSsrc);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
 
-  // The |ssrc| member should still be unset.
+  // The `ssrc` member should still be unset.
   rtp_parameters = channel_->GetDefaultRtpReceiveParameters();
   ASSERT_EQ(1u, rtp_parameters.encodings.size());
   EXPECT_FALSE(rtp_parameters.encodings[0].ssrc);
+}
+
+// Test that if a default stream is created for a non-primary stream (for
+// example, RTX before we know it's RTX), we are still able to explicitly add
+// the stream later.
+TEST_F(WebRtcVideoChannelTest,
+       AddReceiveStreamAfterReceivingNonPrimaryUnsignaledSsrc) {
+  // Receive VP8 RTX packet.
+  RtpPacket rtp_packet;
+  const cricket::VideoCodec vp8 = GetEngineCodec("VP8");
+  rtp_packet.SetPayloadType(default_apt_rtx_types_[vp8.id]);
+  rtp_packet.SetSsrc(2);
+  ReceivePacketAndAdvanceTime(rtp_packet.Buffer(), /* packet_time_us */ -1);
+  EXPECT_EQ(1u, fake_call_->GetVideoReceiveStreams().size());
+
+  cricket::StreamParams params = cricket::StreamParams::CreateLegacy(1);
+  params.AddFidSsrc(1, 2);
+  EXPECT_TRUE(channel_->AddRecvStream(params));
 }
 
 void WebRtcVideoChannelTest::TestReceiverLocalSsrcConfiguration(
@@ -8807,7 +8849,6 @@ class WebRtcVideoChannelSimulcastTest : public ::testing::Test {
     ASSERT_EQ(expected_streams.size(), video_streams.size());
 
     size_t num_streams = video_streams.size();
-    int total_max_bitrate_bps = 0;
     for (size_t i = 0; i < num_streams; ++i) {
       EXPECT_EQ(expected_streams[i].width, video_streams[i].width);
       EXPECT_EQ(expected_streams[i].height, video_streams[i].height);
@@ -8837,12 +8878,6 @@ class WebRtcVideoChannelSimulcastTest : public ::testing::Test {
       if (conference_mode) {
         EXPECT_EQ(expected_streams[i].num_temporal_layers,
                   video_streams[i].num_temporal_layers);
-      }
-
-      if (i == num_streams - 1) {
-        total_max_bitrate_bps += video_streams[i].max_bitrate_bps;
-      } else {
-        total_max_bitrate_bps += video_streams[i].target_bitrate_bps;
       }
     }
 
@@ -8879,13 +8914,13 @@ class WebRtcVideoChannelSimulcastTest : public ::testing::Test {
     return streams[streams.size() - 1];
   }
 
+  webrtc::test::ScopedKeyValueConfig field_trials_;
   webrtc::RtcEventLogNull event_log_;
   FakeCall fake_call_;
   cricket::FakeWebRtcVideoEncoderFactory* encoder_factory_;
   cricket::FakeWebRtcVideoDecoderFactory* decoder_factory_;
   std::unique_ptr<webrtc::MockVideoBitrateAllocatorFactory>
       mock_rate_allocator_factory_;
-  webrtc::FieldTrialBasedConfig field_trials_;
   WebRtcVideoEngine engine_;
   std::unique_ptr<VideoMediaChannel> channel_;
   uint32_t last_ssrc_;
@@ -8979,6 +9014,229 @@ TEST_F(WebRtcVideoChannelTest, SetsRidsOnSendStream) {
   ASSERT_NE(stream, nullptr);
   const auto& config = stream->GetConfig();
   EXPECT_THAT(config.rtp.rids, ElementsAreArray(rids));
+}
+
+TEST_F(WebRtcVideoChannelBaseTest, EncoderSelectorSwitchCodec) {
+  VideoCodec vp9 = GetEngineCodec("VP9");
+
+  cricket::VideoSendParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
+  parameters.codecs.push_back(vp9);
+  EXPECT_TRUE(channel_->SetSendParameters(parameters));
+  channel_->SetSend(true);
+
+  VideoCodec codec;
+  ASSERT_TRUE(channel_->GetSendCodec(&codec));
+  EXPECT_EQ("VP8", codec.name);
+
+  webrtc::MockEncoderSelector encoder_selector;
+  EXPECT_CALL(encoder_selector, OnAvailableBitrate)
+      .WillRepeatedly(Return(webrtc::SdpVideoFormat("VP9")));
+
+  channel_->SetEncoderSelector(kSsrc, &encoder_selector);
+
+  rtc::Thread::Current()->ProcessMessages(30);
+
+  ASSERT_TRUE(channel_->GetSendCodec(&codec));
+  EXPECT_EQ("VP9", codec.name);
+
+  // Deregister the encoder selector in case it's called during test tear-down.
+  channel_->SetEncoderSelector(kSsrc, nullptr);
+}
+
+TEST_F(WebRtcVideoChannelTest, RequestedResolutionSinglecast) {
+  cricket::VideoSendParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
+  ASSERT_TRUE(channel_->SetSendParameters(parameters));
+
+  FakeVideoSendStream* stream = AddSendStream();
+  webrtc::test::FrameForwarder frame_forwarder;
+  cricket::FakeFrameSource frame_source(1280, 720,
+                                        rtc::kNumMicrosecsPerSec / 30);
+  EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, &frame_forwarder));
+
+  {  // TEST requested_resolution < frame size
+    webrtc::RtpParameters rtp_parameters =
+        channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(1UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 640,
+                                                        .height = 360};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+
+    auto streams = stream->GetVideoStreams();
+    ASSERT_EQ(streams.size(), 1u);
+    EXPECT_EQ(rtc::checked_cast<size_t>(640), streams[0].width);
+    EXPECT_EQ(rtc::checked_cast<size_t>(360), streams[0].height);
+  }
+
+  {  // TEST requested_resolution == frame size
+    auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(1UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 1280,
+                                                        .height = 720};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+    auto streams = stream->GetVideoStreams();
+    ASSERT_EQ(streams.size(), 1u);
+    EXPECT_EQ(rtc::checked_cast<size_t>(1280), streams[0].width);
+    EXPECT_EQ(rtc::checked_cast<size_t>(720), streams[0].height);
+  }
+
+  {  // TEST requested_resolution > frame size
+    auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(1UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 2 * 1280,
+                                                        .height = 2 * 720};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+    auto streams = stream->GetVideoStreams();
+    ASSERT_EQ(streams.size(), 1u);
+    EXPECT_EQ(rtc::checked_cast<size_t>(1280), streams[0].width);
+    EXPECT_EQ(rtc::checked_cast<size_t>(720), streams[0].height);
+  }
+
+  EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
+}
+
+TEST_F(WebRtcVideoChannelTest, RequestedResolutionSinglecastCropping) {
+  cricket::VideoSendParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
+  ASSERT_TRUE(channel_->SetSendParameters(parameters));
+
+  FakeVideoSendStream* stream = AddSendStream();
+  webrtc::test::FrameForwarder frame_forwarder;
+  cricket::FakeFrameSource frame_source(1280, 720,
+                                        rtc::kNumMicrosecsPerSec / 30);
+  EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, &frame_forwarder));
+
+  {
+    auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(1UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 720,
+                                                        .height = 720};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+
+    auto streams = stream->GetVideoStreams();
+    ASSERT_EQ(streams.size(), 1u);
+    EXPECT_EQ(rtc::checked_cast<size_t>(720), streams[0].width);
+    EXPECT_EQ(rtc::checked_cast<size_t>(720), streams[0].height);
+  }
+
+  {
+    auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(1UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 1280,
+                                                        .height = 1280};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+
+    auto streams = stream->GetVideoStreams();
+    ASSERT_EQ(streams.size(), 1u);
+    EXPECT_EQ(rtc::checked_cast<size_t>(720), streams[0].width);
+    EXPECT_EQ(rtc::checked_cast<size_t>(720), streams[0].height);
+  }
+
+  {
+    auto rtp_parameters = channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(1UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 650,
+                                                        .height = 650};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    auto streams = stream->GetVideoStreams();
+    ASSERT_EQ(streams.size(), 1u);
+    EXPECT_EQ(rtc::checked_cast<size_t>(480), streams[0].width);
+    EXPECT_EQ(rtc::checked_cast<size_t>(480), streams[0].height);
+  }
+
+  EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
+}
+
+TEST_F(WebRtcVideoChannelTest, RequestedResolutionSimulcast) {
+  cricket::VideoSendParameters parameters;
+  parameters.codecs.push_back(GetEngineCodec("VP8"));
+  ASSERT_TRUE(channel_->SetSendParameters(parameters));
+
+  FakeVideoSendStream* stream = SetUpSimulcast(true, false);
+  webrtc::test::FrameForwarder frame_forwarder;
+  cricket::FakeFrameSource frame_source(1280, 720,
+                                        rtc::kNumMicrosecsPerSec / 30);
+  EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, &frame_forwarder));
+
+  {
+    webrtc::RtpParameters rtp_parameters =
+        channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(3UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 320,
+                                                        .height = 180};
+    rtp_parameters.encodings[1].requested_resolution = {.width = 640,
+                                                        .height = 360};
+    rtp_parameters.encodings[2].requested_resolution = {.width = 1280,
+                                                        .height = 720};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+
+    EXPECT_EQ(GetStreamResolutions(stream->GetVideoStreams()),
+              (std::vector<webrtc::Resolution>{
+                  {.width = 320, .height = 180},
+                  {.width = 640, .height = 360},
+                  {.width = 1280, .height = 720},
+              }));
+  }
+
+  {
+    webrtc::RtpParameters rtp_parameters =
+        channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(3UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 320,
+                                                        .height = 180};
+    rtp_parameters.encodings[1].active = false;
+
+    rtp_parameters.encodings[2].requested_resolution = {.width = 1280,
+                                                        .height = 720};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+
+    EXPECT_EQ(GetStreamResolutions(stream->GetVideoStreams()),
+              (std::vector<webrtc::Resolution>{
+                  {.width = 320, .height = 180},
+                  {.width = 1280, .height = 720},
+              }));
+  }
+
+  {
+    webrtc::RtpParameters rtp_parameters =
+        channel_->GetRtpSendParameters(last_ssrc_);
+    EXPECT_EQ(3UL, rtp_parameters.encodings.size());
+    rtp_parameters.encodings[0].requested_resolution = {.width = 320,
+                                                        .height = 180};
+    rtp_parameters.encodings[1].active = true;
+    rtp_parameters.encodings[1].requested_resolution = {.width = 640,
+                                                        .height = 360};
+    rtp_parameters.encodings[2].requested_resolution = {.width = 960,
+                                                        .height = 540};
+    channel_->SetRtpSendParameters(last_ssrc_, rtp_parameters);
+
+    frame_forwarder.IncomingCapturedFrame(frame_source.GetFrame());
+
+    EXPECT_EQ(GetStreamResolutions(stream->GetVideoStreams()),
+              (std::vector<webrtc::Resolution>{
+                  {.width = 320, .height = 180},
+                  {.width = 640, .height = 360},
+                  {.width = 960, .height = 540},
+              }));
+  }
+
+  EXPECT_TRUE(channel_->SetVideoSend(last_ssrc_, nullptr, nullptr));
 }
 
 }  // namespace cricket

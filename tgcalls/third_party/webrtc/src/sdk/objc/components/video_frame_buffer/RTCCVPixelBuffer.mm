@@ -116,7 +116,7 @@
       return 0;  // Scaling RGBA frames does not require a temporary buffer.
     }
   }
-  RTC_NOTREACHED() << "Unsupported pixel format.";
+  RTC_DCHECK_NOTREACHED() << "Unsupported pixel format.";
   return 0;
 }
 
@@ -146,21 +146,35 @@
       [self cropAndScaleARGBTo:outputPixelBuffer];
       break;
     }
-    default: { RTC_NOTREACHED() << "Unsupported pixel format."; }
+    default: {
+      RTC_DCHECK_NOTREACHED() << "Unsupported pixel format.";
+    }
   }
 
   return YES;
 }
+- (id<RTC_OBJC_TYPE(RTCVideoFrameBuffer)>)cropAndScaleWith:(int)offsetX
+                                                   offsetY:(int)offsetY
+                                                 cropWidth:(int)cropWidth
+                                                cropHeight:(int)cropHeight
+                                                scaleWidth:(int)scaleWidth
+                                               scaleHeight:(int)scaleHeight {
+  return [[RTC_OBJC_TYPE(RTCCVPixelBuffer) alloc]
+      initWithPixelBuffer:_pixelBuffer
+             adaptedWidth:scaleWidth
+            adaptedHeight:scaleHeight
+                cropWidth:cropWidth * _cropWidth / _width
+               cropHeight:cropHeight * _cropHeight / _height
+                    cropX:_cropX + offsetX * _cropWidth / _width
+                    cropY:_cropY + offsetY * _cropHeight / _height];
+}
 
 - (id<RTC_OBJC_TYPE(RTCI420Buffer)>)toI420 {
-  RTC_OBJC_TYPE(RTCMutableI420Buffer)* i420Buffer = nil;
-  
-  @autoreleasepool {
   const OSType pixelFormat = CVPixelBufferGetPixelFormatType(_pixelBuffer);
 
   CVPixelBufferLockBaseAddress(_pixelBuffer, kCVPixelBufferLock_ReadOnly);
 
-  i420Buffer =
+  RTC_OBJC_TYPE(RTCMutableI420Buffer)* i420Buffer =
       [[RTC_OBJC_TYPE(RTCMutableI420Buffer) alloc] initWithWidth:[self width] height:[self height]];
 
   switch (pixelFormat) {
@@ -245,12 +259,13 @@
       }
       break;
     }
-    default: { RTC_NOTREACHED() << "Unsupported pixel format."; }
+    default: {
+      RTC_DCHECK_NOTREACHED() << "Unsupported pixel format.";
+    }
   }
 
   CVPixelBufferUnlockBaseAddress(_pixelBuffer, kCVPixelBufferLock_ReadOnly);
-  }
-  
+
   return i420Buffer;
 }
 

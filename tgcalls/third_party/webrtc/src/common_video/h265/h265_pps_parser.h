@@ -11,9 +11,9 @@
 #ifndef COMMON_VIDEO_H265_PPS_PARSER_H_
 #define COMMON_VIDEO_H265_PPS_PARSER_H_
 
-#include <cstdint>
-
 #include "absl/types/optional.h"
+
+#include <stdint.h>
 
 namespace rtc {
 class BitBuffer;
