@@ -31,7 +31,7 @@ NativeInstance::NativeInstance(bool logToStdErr, string logPath, string host, ui
 }
 
 NativeInstance::~NativeInstance() {
-  printf("NativeInstance::~NativeInstance()");
+  printf("NativeInstance::~NativeInstance()\n");
   if (_videoCapture) {
     _videoCapture.reset();
   }
