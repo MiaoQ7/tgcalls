@@ -17,8 +17,8 @@ namespace webrtc {
 
 class PythonVideoTrackSource {
 public:
-  static std::function<webrtc::VideoTrackSourceInterface*()> create(std::unique_ptr<PythonSource> source, float fps);
-  static rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> createPtr(std::unique_ptr<PythonSource> source, float fps);
+  static std::function<webrtc::VideoTrackSourceInterface*()> create(std::shared_ptr<PythonSource> source, float fps);
+  static rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> createPtr(std::shared_ptr<PythonSource> source, float fps);
 };
 
 

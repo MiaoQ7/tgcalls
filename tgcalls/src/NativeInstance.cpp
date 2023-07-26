@@ -260,7 +260,7 @@ void NativeInstance::setVideoCapture(std::function<std::string()> getNextFrameBu
   _videoCapture = tgcalls::VideoCaptureInterface::Create(
       tgcalls::StaticThreads::getThreads(),
       PythonVideoTrackSource::createPtr(
-          std::make_unique<PythonSource>(std::move(getNextFrameBuffer), fps, width, height),fps),
+          std::make_shared<PythonSource>(std::move(getNextFrameBuffer), fps, width, height),fps),
       "python_video_track_source"
   );
 
@@ -827,7 +827,7 @@ void NativeInstance::setP2PVideoCapture(std::function<std::string()> getNextFram
   _videoCapture = tgcalls::VideoCaptureInterface::Create(
       tgcalls::StaticThreads::getThreads(),
       PythonVideoTrackSource::createPtr(
-          std::make_unique<PythonSource>(std::move(getNextFrameBuffer), fps, width, height, rotate),fps),
+          std::make_shared<PythonSource>(std::move(getNextFrameBuffer), fps, width, height, rotate),fps),
       "python_video_track_source"
   );
 
@@ -839,7 +839,7 @@ void NativeInstance::setP2PVideoCaptureYUV(std::function<std::string()> getNextF
   _videoCapture = tgcalls::VideoCaptureInterface::Create(
       tgcalls::StaticThreads::getThreads(),
       PythonVideoTrackSource::createPtr(
-          std::make_unique<PythonSourceYUV>(std::move(getNextFrameBuffer), fps, width, height),fps),
+          std::make_shared<PythonSourceYUV>(std::move(getNextFrameBuffer), fps, width, height),fps),
       "python_video_track_source"
   );
 
@@ -851,7 +851,7 @@ void NativeInstance::setP2PVideoCapturePure(std::function<std::string()> getNext
   _videoCapture = tgcalls::VideoCaptureInterface::Create(
       tgcalls::StaticThreads::getThreads(),
       PythonVideoTrackSource::createPtr(
-          std::make_unique<PythonPureSource>(std::move(getNextFrameBuffer), fps, width, height),fps),
+          std::make_shared<PythonPureSource>(std::move(getNextFrameBuffer), fps, width, height),fps),
       "python_video_track_source"
   );
 

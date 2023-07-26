@@ -4,12 +4,12 @@
 
 class PythonVideoSource : public rtc::VideoSourceInterface<webrtc::VideoFrame> {
 public:
-  PythonVideoSource(std::unique_ptr<PythonSource> &source, int fps) {
+  PythonVideoSource(std::shared_ptr<PythonSource> source, int fps) {
     // TODO rewrite this thread
     _data = std::make_shared<Data>();
     _data->is_running = true;
     _source = std::move(source);
-    std::thread([fps, data = _data, source = std::move(_source)] {
+    std::thread([fps, data = _data, source = _source] {
       std::uint32_t step = 0;
       while (data->is_running) {
         step++;
@@ -58,16 +58,16 @@ private:
     rtc::VideoBroadcaster broadcaster;
   };
   std::shared_ptr<Data> _data;
-  std::unique_ptr<PythonSource> _source;
+  std::shared_ptr<PythonSource> _source;
 };
 
 class PythonVideoSourceImpl : public webrtc::VideoTrackSource {
 public:
-  static rtc::scoped_refptr<PythonVideoSourceImpl> Create(std::unique_ptr<PythonSource> source, float fps) {
+  static rtc::scoped_refptr<PythonVideoSourceImpl> Create(std::shared_ptr<PythonSource> source, float fps) {
     return rtc::scoped_refptr<PythonVideoSourceImpl>(new rtc::RefCountedObject<PythonVideoSourceImpl>(std::move(source), fps));
   }
 
-  explicit PythonVideoSourceImpl(std::unique_ptr<PythonSource> source, float fps) :
+  explicit PythonVideoSourceImpl(std::shared_ptr<PythonSource> source, float fps) :
     VideoTrackSource(false), source_(std::move(source), fps) {
   }
 
@@ -86,13 +86,13 @@ protected:
   }
 };
 
-std::function<webrtc::VideoTrackSourceInterface*()> PythonVideoTrackSource::create(std::unique_ptr<PythonSource> frame_source, float fps) {
+std::function<webrtc::VideoTrackSourceInterface*()> PythonVideoTrackSource::create(std::shared_ptr<PythonSource> frame_source, float fps) {
   auto source = PythonVideoSourceImpl::Create(std::move(frame_source), fps);
   return [source] {
     return source.get();
   };
 }
 
-rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> PythonVideoTrackSource::createPtr(std::unique_ptr<PythonSource> frame_source, float fps) {
+rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> PythonVideoTrackSource::createPtr(std::shared_ptr<PythonSource> frame_source, float fps) {
   return PythonVideoSourceImpl::Create(std::move(frame_source), fps);
 }
