@@ -4,7 +4,7 @@
 
 class PythonVideoSource : public rtc::VideoSourceInterface<webrtc::VideoFrame> {
 public:
-  PythonVideoSource(std::unique_ptr<PythonSource> source, int fps) {
+  PythonVideoSource(std::unique_ptr<PythonSource> &source, int fps) {
     // TODO rewrite this thread
     _data = std::make_shared<Data>();
     _data->is_running = true;
