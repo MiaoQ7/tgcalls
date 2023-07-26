@@ -1,12 +1,11 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.16)
 cmake_policy(SET CMP0076 NEW)
-# cmake 3.15+ cmake_policy(SET CMP0091 NEW)
+cmake_policy(SET CMP0091 NEW)
+include(CMakeDependentOption)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 set(TG_OWT_SPECIAL_TARGET "" CACHE STRING "Use special platform target, like 'macstore' for Mac App Store.")
-
-set(CMAKE_OSX_DEPLOYMENT_TARGET 10.11 CACHE STRING "Minimum OS X deployment version" FORCE)
 
 if (NOT TG_OWT_SPECIAL_TARGET STREQUAL "")
     set(TG_OWT_PACKAGED_BUILD 0)
@@ -17,20 +16,32 @@ endif()
 set(not_packaged_build 0)
 if (NOT TG_OWT_PACKAGED_BUILD)
     set(not_packaged_build 1)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 10.12 CACHE STRING "Minimum OS X deployment version" FORCE)
 endif()
 
-option(BUILD_SHARED_LIBS "Builds shared libraries instead of static." ${TG_OWT_PACKAGED_BUILD})
+option(BUILD_SHARED_LIBS "Builds shared libraries instead of static." OFF)
 option(TG_OWT_USE_PROTOBUF "Use protobuf to generate additional headers. Useful for packaged build." ${BUILD_SHARED_LIBS})
-option(TG_OWT_USE_PIPEWIRE "Use pipewire for desktop capture on non-Apple Unix." ON)
-option(TG_OWT_DLOPEN_PIPEWIRE "dlopen pipewire 0.3 for desktop capture on non-Apple Unix." ${not_packaged_build})
-option(TG_OWT_BUILD_AUDIO_BACKENDS "Build webrtc audio backends." ON)
-
-if (NOT UNIX OR APPLE)
-    set(TG_OWT_USE_PIPEWIRE OFF)
-endif()
+cmake_dependent_option(TG_OWT_USE_X11 "Use X11 for desktop capture." ON "UNIX; NOT APPLE" OFF)
+cmake_dependent_option(TG_OWT_USE_PIPEWIRE "Use pipewire for desktop capture." ON "UNIX; NOT APPLE" OFF)
+cmake_dependent_option(TG_OWT_DLOPEN_PIPEWIRE "dlopen pipewire for desktop capture." ${not_packaged_build} TG_OWT_USE_PIPEWIRE OFF)
+option(TG_OWT_BUILD_AUDIO_BACKENDS "Build webrtc audio backends." OFF)
 
 if (BUILD_SHARED_LIBS)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+    message(WARNING
+        "tg_owt is a fork of Google's webrtc library and is developed by them as a static library without stable ABI in mind."
+        "The feature of building tg_owt as a shared library is community maintained, it may and will break at any time without guarantee to work again."
+        "Please reconsider your decision. Good luck."
+    )
+endif()
+
+if (TG_OWT_BUILD_AUDIO_BACKENDS)
+    message(WARNING
+        "According to upstream WebRTC developers, audio backends for desktop platforms are only for demo purposes."
+        "It's not recommended to use them. You've been warned."
+        "https://bugs.chromium.org/p/webrtc/issues/detail?id=10537#c2"
+        "https://bugs.chromium.org/p/webrtc/issues/detail?id=10622#c3"
+    )
 endif()
 
 project(tg_owt
@@ -64,16 +75,12 @@ include(cmake/generate_target.cmake)
 include(cmake/target_yasm_sources.cmake)
 include(cmake/external.cmake)
 include(cmake/libabsl.cmake)
+include(cmake/libcrc32c.cmake)
 include(cmake/libopenh264.cmake)
 include(cmake/libpffft.cmake)
 include(cmake/librnnoise.cmake)
 include(cmake/libsrtp.cmake)
-include(cmake/libusrsctp.cmake)
-include(cmake/libvpx.cmake)
 include(cmake/libyuv.cmake)
-if (NOT WIN32 AND NOT APPLE)
-    include(cmake/libevent.cmake)
-endif()
 if (APPLE)
     include(cmake/libsdkmacos.cmake)
 endif()
@@ -90,25 +97,41 @@ init_target(tg_owt)
 if (TG_OWT_USE_PIPEWIRE)
     if (TG_OWT_DLOPEN_PIPEWIRE)
         include(cmake/generate_stubs.cmake)
-        set(stubs_loc ${webrtc_loc}/modules/desktop_capture/linux)
+        set(stubs_loc ${webrtc_loc}/modules/desktop_capture/linux/wayland)
         generate_stubs(tg_owt
             ${stubs_loc}/pipewire_stub_header.fragment
             pipewire_stubs
-            ${stubs_loc}/pipewire03.sigs
+            ${stubs_loc}/pipewire.sigs
         )
         target_compile_definitions(tg_owt
         PRIVATE
             WEBRTC_DLOPEN_PIPEWIRE
         )
+
         target_include_directories(tg_owt
         PRIVATE
             ${webrtc_loc}/third_party/pipewire/spa/include
             ${webrtc_loc}/third_party/pipewire/src
             ${webrtc_loc}/third_party/pipewire/build/src
         )
-    else()
-        link_pipewire(tg_owt)
     endif()
+
+    link_glib(tg_owt)
+    link_pipewire(tg_owt ${TG_OWT_DLOPEN_PIPEWIRE})
+
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(GBM REQUIRED gbm)
+    pkg_check_modules(DRM REQUIRED libdrm)
+    pkg_check_modules(GL REQUIRED gl)
+    pkg_check_modules(EGL REQUIRED egl)
+
+    target_include_directories(tg_owt SYSTEM
+    PRIVATE
+        ${GBM_INCLUDE_DIRS}
+        ${DRM_INCLUDE_DIRS}
+        ${GL_INCLUDE_DIRS}
+        ${EGL_INCLUDE_DIRS}
+    )
 endif()
 
 set_target_properties(tg_owt PROPERTIES SOVERSION 0 VERSION 0.0.0)
@@ -151,8 +174,8 @@ link_ffmpeg(tg_owt)
 link_opus(tg_owt)
 link_libabsl(tg_owt)
 link_libopenh264(tg_owt)
-link_libusrsctp(tg_owt)
 link_libvpx(tg_owt)
+link_crc32c(tg_owt)
 
 if (TG_OWT_BUILD_AUDIO_BACKENDS AND (UNIX AND NOT APPLE))
     link_libalsa(tg_owt)
@@ -160,16 +183,11 @@ if (TG_OWT_BUILD_AUDIO_BACKENDS AND (UNIX AND NOT APPLE))
     link_dl(tg_owt)
 endif()
 
-if (NOT WIN32 AND NOT APPLE)
-    link_libevent(tg_owt)
-endif()
-
 include(cmake/libwebrtcbuild.cmake)
 target_link_libraries(tg_owt PUBLIC tg_owt::libwebrtcbuild)
 
-if (UNIX AND NOT APPLE)
+if (TG_OWT_USE_X11)
     link_x11(tg_owt)
-    link_glib(tg_owt)
 endif()
 
 function(add_sublibrary postfix)
@@ -198,9 +216,6 @@ nice_target_sources(tg_owt ${webrtc_loc}
 PRIVATE
     rtc_base/deprecated/recursive_critical_section.cc
     rtc_base/deprecated/recursive_critical_section.h
-    rtc_base/async_invoker.cc
-    rtc_base/async_invoker.h
-    rtc_base/async_invoker_inl.h
     rtc_base/async_packet_socket.cc
     rtc_base/async_packet_socket.h
     rtc_base/async_resolver_interface.cc
@@ -221,8 +236,6 @@ PRIVATE
     rtc_base/crypt_string.h
     rtc_base/checks.cc
     rtc_base/checks.h
-    # rtc_base/critical_section.cc
-    # rtc_base/critical_section.h
     rtc_base/data_rate_limiter.cc
     rtc_base/data_rate_limiter.h
     rtc_base/dscp.h
@@ -236,16 +249,14 @@ PRIVATE
     rtc_base/ip_address.h
     rtc_base/logging.cc
     rtc_base/logging.h
-    # rtc_base/keep_ref_until_done.h
     rtc_base/mdns_responder_interface.h
     rtc_base/memory/aligned_malloc.cc
     rtc_base/memory/aligned_malloc.h
     rtc_base/memory/fifo_buffer.cc
     rtc_base/memory/fifo_buffer.h
+    rtc_base/memory/always_valid_pointer.h
     rtc_base/message_digest.cc
     rtc_base/message_digest.h
-    rtc_base/message_handler.cc
-    rtc_base/message_handler.h
     rtc_base/net_helper.cc
     rtc_base/net_helper.h
     rtc_base/net_helpers.cc
@@ -295,9 +306,6 @@ PRIVATE
     rtc_base/rtc_certificate_generator.h
     rtc_base/rate_limiter.cc
     rtc_base/rate_limiter.h
-    # rtc_base/signal_thread.cc
-    # rtc_base/signal_thread.h
-    rtc_base/sigslot_repeater.h
     rtc_base/socket.cc
     rtc_base/socket.h
     rtc_base/socket_adapters.cc
@@ -324,12 +332,12 @@ PRIVATE
     rtc_base/time_utils.h
     rtc_base/thread.cc
     rtc_base/thread.h
-    rtc_base/thread_message.h
     rtc_base/unique_id_generator.cc
     rtc_base/unique_id_generator.h
-    # rtc_base/bind.h
     rtc_base/bit_buffer.cc
     rtc_base/bit_buffer.h
+    rtc_base/bitstream_reader.cc
+    rtc_base/bitstream_reader.h
     rtc_base/buffer.h
     rtc_base/buffer_queue.cc
     rtc_base/buffer_queue.h
@@ -342,13 +350,11 @@ PRIVATE
     rtc_base/event.h
     rtc_base/event_tracer.cc
     rtc_base/event_tracer.h
-    rtc_base/location.cc
-    rtc_base/location.h
-    rtc_base/message_buffer_reader.h
     rtc_base/numerics/histogram_percentile_counter.cc
     rtc_base/numerics/histogram_percentile_counter.h
     rtc_base/numerics/mod_ops.h
     rtc_base/numerics/moving_max_counter.h
+    rtc_base/numerics/moving_percentile_filter.h
     rtc_base/numerics/sample_counter.cc
     rtc_base/numerics/sample_counter.h
     rtc_base/one_time_event.h
@@ -378,6 +384,13 @@ PRIVATE
     rtc_base/win32.h
     rtc_base/win32_window.cc
     rtc_base/win32_window.h
+    rtc_base/containers/flat_map.h
+    rtc_base/containers/flat_set.h
+    rtc_base/containers/flat_tree.cc
+    rtc_base/containers/flat_tree.h
+    rtc_base/containers/identity.h
+    rtc_base/containers/invoke.h
+    rtc_base/containers/move_only_int.h
     rtc_base/win/scoped_com_initializer.cc
     rtc_base/win/scoped_com_initializer.h
     rtc_base/win/windows_version.cc
@@ -388,8 +401,8 @@ PRIVATE
     rtc_base/strings/string_builder.h
     rtc_base/strings/string_format.cc
     rtc_base/strings/string_format.h
-    # rtc_base/experiments/experimental_screenshare_settings.cc
-    # rtc_base/experiments/experimental_screenshare_settings.h
+    rtc_base/experiments/bandwidth_quality_scaler_settings.cc
+    rtc_base/experiments/bandwidth_quality_scaler_settings.h
     rtc_base/experiments/encoder_info_settings.cc
     rtc_base/experiments/encoder_info_settings.h
     rtc_base/experiments/alr_experiment.cc
@@ -398,7 +411,6 @@ PRIVATE
     rtc_base/experiments/field_trial_list.cc
     rtc_base/experiments/field_trial_parser.cc
     rtc_base/experiments/field_trial_units.cc
-    rtc_base/experiments/jitter_upper_bound_experiment.cc
     rtc_base/experiments/keyframe_interval_settings.cc
     rtc_base/experiments/min_video_bitrate_experiment.cc
     rtc_base/experiments/normalize_simulcast_size_experiment.cc
@@ -420,34 +432,26 @@ PRIVATE
     api/numerics/samples_stats_counter.h
     rtc_base/strings/audio_format_to_string.cc
     rtc_base/strings/string_builder.cc
-    rtc_base/synchronization/mutex.cc
     rtc_base/synchronization/mutex.h
     rtc_base/synchronization/yield.cc
     rtc_base/synchronization/yield.h
-    # rtc_base/synchronization/rw_lock_posix.cc
-    # rtc_base/synchronization/rw_lock_posix.h
-    # rtc_base/synchronization/rw_lock_win.cc
-    # rtc_base/synchronization/rw_lock_win.h
-    # rtc_base/synchronization/rw_lock_wrapper.cc
-    # rtc_base/synchronization/rw_lock_wrapper.h
     rtc_base/synchronization/sequence_checker_internal.cc
     rtc_base/synchronization/sequence_checker_internal.h
     rtc_base/synchronization/yield_policy.cc
     rtc_base/synchronization/yield_policy.h
     rtc_base/system/file_wrapper.cc
-    # rtc_base/system/thread_registry.cc
-    # rtc_base/system/warn_current_thread_is_deadlocked.cc
     rtc_base/system/cocoa_threading.h
     rtc_base/system/cocoa_threading.mm
     rtc_base/system/gcd_helpers.h
     rtc_base/system/gcd_helpers.m
+    rtc_base/system/no_cfi_icall.h
     rtc_base/system_time.cc
     rtc_base/system_time.h
     rtc_base/task_queue.cc
     rtc_base/task_queue_gcd.cc
     rtc_base/task_queue_gcd.h
-    rtc_base/task_queue_libevent.cc
-    rtc_base/task_queue_libevent.h
+    rtc_base/task_queue_stdlib.cc
+    rtc_base/task_queue_stdlib.h
     rtc_base/task_queue_win.cc
     rtc_base/task_queue_win.h
     rtc_base/ifaddrs_converter.cc
@@ -457,11 +461,8 @@ PRIVATE
     rtc_base/mac_ifaddrs_converter.cc
     rtc_base/task_utils/repeating_task.cc
     rtc_base/task_utils/repeating_task.h
-    rtc_base/task_utils/pending_task_safety_flag.cc
-    rtc_base/task_utils/pending_task_safety_flag.h
     rtc_base/third_party/base64/base64.cc
     rtc_base/third_party/sigslot/sigslot.cc
-    rtc_base/time/timestamp_extrapolator.cc
     api/adaptation/resource.cc
     api/adaptation/resource.h
     api/audio/audio_frame.cc
@@ -502,9 +503,13 @@ PRIVATE
     api/crypto/crypto_options.cc
     api/data_channel_interface.cc
     api/dtls_transport_interface.cc
+    api/field_trials.cc
+    api/field_trials.h
+    api/field_trials_view.h
     api/ice_transport_factory.cc
     api/jsep.cc
     api/jsep_ice_candidate.cc
+    api/make_ref_counted.h
     api/media_stream_interface.cc
     api/media_types.cc
     api/neteq/custom_neteq_factory.cc
@@ -521,14 +526,16 @@ PRIVATE
     api/rtp_packet_info.cc
     api/rtp_parameters.cc
     api/rtp_receiver_interface.cc
-    api/rtp_sender_interface.cc
     api/rtp_transceiver_interface.cc
     api/sctp_transport_interface.cc
     api/stats_types.cc
+    api/webrtc_key_value_config.h
     api/task_queue/default_task_queue_factory.h
     api/task_queue/default_task_queue_factory_gcd.cc
-    api/task_queue/default_task_queue_factory_libevent.cc
+    api/task_queue/default_task_queue_factory_stdlib.cc
     api/task_queue/default_task_queue_factory_win.cc
+    api/task_queue/pending_task_safety_flag.cc
+    api/task_queue/pending_task_safety_flag.h
     api/task_queue/task_queue_base.cc
     api/transport/bitrate_settings.cc
     api/transport/field_trial_based_config.cc
@@ -538,10 +545,6 @@ PRIVATE
     api/transport/rtp/dependency_descriptor.cc
     api/transport/rtp/dependency_descriptor.h
     api/transport/rtp/rtp_source.h
-    # api/transport/media/media_transport_config.cc
-    # api/transport/media/media_transport_config.h
-    # api/transport/media/media_transport_interface.cc
-    # api/transport/media/media_transport_interface.h
     call/adaptation/adaptation_constraint.cc
     call/adaptation/adaptation_constraint.h
     call/adaptation/broadcast_resource_listener.cc
@@ -564,6 +567,9 @@ PRIVATE
     call/adaptation/video_stream_input_state_provider.h
     audio/voip/audio_egress.cc
     audio/voip/audio_egress.h
+    api/wrapping_async_dns_resolver.cc
+    api/video_track_source_proxy_factory.h
+    api/video_track_source_constraints.h
     api/units/data_rate.cc
     api/units/data_size.cc
     api/units/frequency.cc
@@ -574,10 +580,22 @@ PRIVATE
     api/video/encoded_frame.cc
     api/video/encoded_image.cc
     api/video/hdr_metadata.cc
+    api/video/frame_buffer.cc
+    api/video/frame_buffer.h
     api/video/i010_buffer.cc
+    api/video/i210_buffer.cc
+    api/video/i210_buffer.h
     api/video/i420_buffer.cc
+    api/video/i422_buffer.cc
+    api/video/i422_buffer.h
+    api/video/i444_buffer.cc
+    api/video/i444_buffer.h
     api/video/nv12_buffer.cc
     api/video/nv12_buffer.h
+    api/video/render_resolution.h
+    api/video/resolution.h
+    api/video/rtp_video_frame_assembler.cc
+    api/video/rtp_video_frame_assembler.h
     api/video/video_adaptation_counters.cc
     api/video/video_adaptation_counters.h
     api/video/video_bitrate_allocation.cc
@@ -589,36 +607,44 @@ PRIVATE
     api/video/video_frame_metadata.h
     api/video/video_source_interface.cc
     api/video/video_stream_decoder_create.cc
-    # api/video/video_stream_encoder_create.cc
     api/video/video_timing.cc
-    api/video/video_stream_encoder_interface.h
-    # api/video/video_stream_encoder_observer.cc
-    # api/video/video_stream_encoder_observer.h
     api/video/video_stream_encoder_settings.h
+    api/video_codecs/av1_profile.cc
+    api/video_codecs/av1_profile.h
     api/video_codecs/builtin_video_decoder_factory.cc
     api/video_codecs/builtin_video_encoder_factory.cc
+    api/video_codecs/h264_profile_level_id.cc
+    api/video_codecs/h264_profile_level_id.h
+    api/video_codecs/scalability_mode.cc
+    api/video_codecs/scalability_mode.h
+    api/video_codecs/scalability_mode_helper.cc
+    api/video_codecs/scalability_mode_helper.h
     api/video_codecs/sdp_video_format.cc
+    api/video_codecs/simulcast_stream.cc
+    api/video_codecs/simulcast_stream.h
     api/video_codecs/video_codec.cc
     api/video_codecs/video_decoder.cc
-    api/video_codecs/video_decoder_factory.cc
+    api/video_codecs/video_decoder_factory_template.h
+    api/video_codecs/video_decoder_factory_template_dav1d_adapter.h
+    api/video_codecs/video_decoder_factory_template_libvpx_vp8_adapter.h
+    api/video_codecs/video_decoder_factory_template_libvpx_vp9_adapter.h
+    api/video_codecs/video_decoder_factory_template_open_h264_adapter.h
     api/video_codecs/video_decoder_software_fallback_wrapper.cc
     api/video_codecs/video_encoder.cc
-    api/video_codecs/video_encoder_config.cc
+    api/video_codecs/video_encoder_factory_template.h
+    api/video_codecs/video_encoder_factory_template_libaom_av1_adapter.h
+    api/video_codecs/video_encoder_factory_template_libvpx_vp8_adapter.h
+    api/video_codecs/video_encoder_factory_template_libvpx_vp9_adapter.h
+    api/video_codecs/video_encoder_factory_template_open_h264_adapter.h
     api/video_codecs/video_encoder_software_fallback_wrapper.cc
     api/video_codecs/vp8_frame_config.cc
     api/video_codecs/vp8_temporal_layers.cc
     api/video_codecs/vp8_temporal_layers_factory.cc
+    api/video_codecs/vp9_profile.cc
+    api/video_codecs/vp9_profile.h
     pc/channel.cc
     pc/channel.h
     pc/channel_interface.h
-    pc/channel_manager.cc
-    pc/channel_manager.h
-    # pc/composite_data_channel_transport.cc
-    # pc/composite_data_channel_transport.h
-    # pc/composite_rtp_transport.cc
-    # pc/composite_rtp_transport.h
-    # pc/datagram_rtp_transport.cc
-    # pc/datagram_rtp_transport.h
     pc/dtls_srtp_transport.cc
     pc/dtls_srtp_transport.h
     pc/dtls_transport.cc
@@ -630,23 +656,31 @@ PRIVATE
     pc/jsep_ice_candidate.cc
     pc/jsep_transport.cc
     pc/jsep_transport.h
+    pc/jsep_transport_collection.cc
+    pc/jsep_transport_collection.h
     pc/jsep_transport_controller.cc
     pc/jsep_transport_controller.h
     pc/media_protocol_names.cc
     pc/media_protocol_names.h
     pc/media_session.cc
     pc/media_session.h
+    pc/media_stream_proxy.h
+    pc/media_stream_track_proxy.h
+    pc/peer_connection_factory_proxy.h
+    pc/peer_connection_proxy.h
+    pc/proxy.cc
+    pc/proxy.h
     pc/rtcp_mux_filter.cc
     pc/rtcp_mux_filter.h
     pc/rtp_media_utils.cc
     pc/rtp_media_utils.h
+    pc/rtp_receiver_proxy.h
     pc/rtp_sender.cc
     pc/rtp_sender.h
+    pc/rtp_sender_proxy.h
     pc/rtp_transport.cc
     pc/rtp_transport.h
     pc/rtp_transport_internal.h
-    pc/sctp_data_channel_transport.cc
-    pc/sctp_data_channel_transport.h
     pc/sctp_transport.cc
     pc/sctp_transport.h
     pc/sctp_utils.cc
@@ -665,6 +699,8 @@ PRIVATE
     pc/transport_stats.h
     pc/video_track_source.cc
     pc/video_track_source.h
+    pc/video_track_source_proxy.cc
+    pc/video_track_source_proxy.h
     pc/webrtc_sdp.cc
     pc/webrtc_sdp.h
     pc/usage_pattern.cc
@@ -676,8 +712,6 @@ PRIVATE
     pc/audio_track.h
     pc/connection_context.cc
     pc/connection_context.h
-    # pc/data_channel.cc
-    # pc/data_channel.h
     pc/data_channel_utils.cc
     pc/data_channel_utils.h
     pc/data_channel_controller.cc
@@ -688,17 +722,18 @@ PRIVATE
     pc/ice_server_parsing.h
     pc/jitter_buffer_delay.cc
     pc/jitter_buffer_delay.h
-    pc/jitter_buffer_delay_interface.h
-    pc/jitter_buffer_delay_proxy.h
     pc/jsep_ice_candidate.cc
     pc/jsep_session_description.cc
+    pc/legacy_stats_collector.cc
+    pc/legacy_stats_collector.h
+    pc/legacy_stats_collector_interface.h
+    pc/peer_connection_sdp_methods.h
     pc/local_audio_source.cc
     pc/local_audio_source.h
     pc/media_stream.cc
     pc/media_stream.h
     pc/media_stream_observer.cc
     pc/media_stream_observer.h
-    # pc/media_stream_track.h
     pc/peer_connection.cc
     pc/peer_connection.h
     pc/peer_connection_message_handler.cc
@@ -712,8 +747,6 @@ PRIVATE
     pc/rtc_stats_collector.h
     pc/rtc_stats_traversal.cc
     pc/rtc_stats_traversal.h
-    pc/rtp_data_channel.cc
-    pc/rtp_data_channel.h
     pc/rtp_transmission_manager.cc
     pc/rtp_transmission_manager.h
     pc/rtp_parameters_conversion.cc
@@ -732,8 +765,6 @@ PRIVATE
     pc/sdp_utils.h
     pc/sctp_data_channel.cc
     pc/sctp_data_channel.h
-    pc/stats_collector.cc
-    pc/stats_collector.h
     pc/stream_collection.h
     pc/track_media_info_map.cc
     pc/track_media_info_map.h
@@ -753,40 +784,40 @@ PRIVATE
     pc/webrtc_session_description_factory.h
     media/base/adapted_video_track_source.cc
     media/base/codec.cc
-    media/base/h264_profile_level_id.cc
     media/base/media_channel.cc
     media/base/media_constants.cc
     media/base/media_engine.cc
     media/base/rid_description.cc
-    media/base/rtp_data_engine.cc
     media/base/rtp_utils.cc
-    media/base/sdp_fmtp_utils.cc
+    media/base/sdp_video_format_utils.cc
+    media/base/sdp_video_format_utils.h
     media/base/stream_params.cc
     media/base/turn_utils.cc
     media/base/video_adapter.cc
     media/base/video_broadcaster.cc
     media/base/video_common.cc
     media/base/video_source_base.cc
-    media/base/vp9_profile.cc
     media/engine/adm_helpers.cc
-    # media/engine/constants.cc
     media/engine/encoder_simulcast_proxy.cc
     media/engine/internal_decoder_factory.cc
     media/engine/internal_encoder_factory.cc
     media/engine/multiplex_codec_factory.cc
     media/engine/payload_type_mapper.cc
-    media/engine/simulcast.cc
     media/engine/simulcast_encoder_adapter.cc
     media/engine/unhandled_packets_buffer.cc
     media/engine/webrtc_media_engine.cc
     media/engine/webrtc_media_engine_defaults.cc
     media/engine/webrtc_video_engine.cc
     media/engine/webrtc_voice_engine.cc
-    media/sctp/noop.cc
-    media/sctp/sctp_transport.cc
+    media/sctp/dcsctp_transport.cc
+    media/sctp/dcsctp_transport.h
+    media/sctp/sctp_transport_factory.cc
+    media/sctp/sctp_transport_factory.h
+    system_wrappers/include/denormal_disabler.h
     system_wrappers/source/clock.cc
     system_wrappers/source/cpu_features.cc
     system_wrappers/source/cpu_info.cc
+    system_wrappers/source/denormal_disabler.cc
     system_wrappers/source/field_trial.cc
     system_wrappers/source/metrics.cc
     system_wrappers/source/rtp_to_ntp_estimator.cc
@@ -974,6 +1005,10 @@ PRIVATE
     modules/audio_coding/codecs/ilbc/vq4.c
     modules/audio_coding/codecs/ilbc/window32_w32.c
     modules/audio_coding/codecs/ilbc/xcorr_coef.c
+    modules/audio_coding/neteq/reorder_optimizer.cc
+    modules/audio_coding/neteq/reorder_optimizer.h
+    modules/audio_coding/neteq/underrun_optimizer.cc
+    modules/audio_coding/neteq/underrun_optimizer.h
     modules/audio_coding/neteq/accelerate.cc
     modules/audio_coding/neteq/audio_multi_vector.cc
     modules/audio_coding/neteq/audio_vector.cc
@@ -996,6 +1031,8 @@ PRIVATE
     modules/audio_coding/neteq/neteq_impl.cc
     modules/audio_coding/neteq/normal.cc
     modules/audio_coding/neteq/packet.cc
+    modules/audio_coding/neteq/packet_arrival_history.cc
+    modules/audio_coding/neteq/packet_arrival_history.h
     modules/audio_coding/neteq/packet_buffer.cc
     modules/audio_coding/neteq/post_decode_vad.cc
     modules/audio_coding/neteq/preemptive_expand.cc
@@ -1007,13 +1044,6 @@ PRIVATE
     modules/audio_coding/neteq/timestamp_scaler.cc
     modules/audio_device/include/audio_device_factory.cc
     modules/audio_device/include/audio_device_factory.h
-    # modules/audio_device/android/audio_manager.cc
-    # modules/audio_device/android/audio_record_jni.cc
-    # modules/audio_device/android/audio_track_jni.cc
-    # modules/audio_device/android/build_info.cc
-    # modules/audio_device/android/opensles_common.cc
-    # modules/audio_device/android/opensles_player.cc
-    # modules/audio_device/android/opensles_recorder.cc
     modules/audio_device/linux/alsasymboltable_linux.cc
     modules/audio_device/linux/alsasymboltable_linux.h
     modules/audio_device/linux/audio_device_alsa_linux.cc
@@ -1067,6 +1097,7 @@ PRIVATE
     modules/audio_processing/aec3/aec_state.cc
     modules/audio_processing/aec3/alignment_mixer.cc
     modules/audio_processing/aec3/api_call_jitter_metrics.cc
+    modules/audio_processing/aec3/block.h
     modules/audio_processing/aec3/block_buffer.cc
     modules/audio_processing/aec3/block_delay_buffer.cc
     modules/audio_processing/aec3/block_framer.cc
@@ -1075,6 +1106,8 @@ PRIVATE
     modules/audio_processing/aec3/clockdrift_detector.cc
     modules/audio_processing/aec3/coarse_filter_update_gain.cc
     modules/audio_processing/aec3/comfort_noise_generator.cc
+    modules/audio_processing/aec3/config_selector.cc
+    modules/audio_processing/aec3/config_selector.h
     modules/audio_processing/aec3/decimator.cc
     modules/audio_processing/aec3/dominant_nearend_detector.cc
     modules/audio_processing/aec3/downsampled_render_buffer.cc
@@ -1093,6 +1126,8 @@ PRIVATE
     modules/audio_processing/aec3/matched_filter.cc
     modules/audio_processing/aec3/matched_filter_lag_aggregator.cc
     modules/audio_processing/aec3/moving_average.cc
+    modules/audio_processing/aec3/multi_channel_content_detector.cc
+    modules/audio_processing/aec3/multi_channel_content_detector.h
     modules/audio_processing/aec3/refined_filter_update_gain.cc
     modules/audio_processing/aec3/render_buffer.cc
     modules/audio_processing/aec3/render_delay_buffer.cc
@@ -1123,36 +1158,40 @@ PRIVATE
     modules/audio_processing/aecm/echo_control_mobile.cc
     modules/audio_processing/agc/agc.cc
     modules/audio_processing/agc/agc_manager_direct.cc
+    modules/audio_processing/agc/analog_gain_stats_reporter.cc
+    modules/audio_processing/agc/analog_gain_stats_reporter.h
     modules/audio_processing/agc/legacy/analog_agc.cc
     modules/audio_processing/agc/legacy/digital_agc.cc
     modules/audio_processing/agc/loudness_histogram.cc
     modules/audio_processing/agc/utility.cc
-    modules/audio_processing/agc2/adaptive_agc.cc
+    modules/audio_processing/agc2/adaptive_digital_gain_controller.cc
     modules/audio_processing/agc2/adaptive_digital_gain_applier.cc
     modules/audio_processing/agc2/adaptive_mode_level_estimator.cc
-    # modules/audio_processing/agc2/adaptive_mode_level_estimator_agc.cc
-    # modules/audio_processing/agc2/agc2_common.cc
     modules/audio_processing/agc2/agc2_testing_common.cc
     modules/audio_processing/agc2/biquad_filter.cc
+    modules/audio_processing/agc2/clipping_predictor.cc
+    modules/audio_processing/agc2/clipping_predictor.h
+    modules/audio_processing/agc2/clipping_predictor_level_buffer.cc
+    modules/audio_processing/agc2/clipping_predictor_level_buffer.h
     modules/audio_processing/agc2/cpu_features.cc
     modules/audio_processing/agc2/cpu_features.h
     modules/audio_processing/agc2/compute_interpolated_gain_curve.cc
-    modules/audio_processing/agc2/down_sampler.cc
     modules/audio_processing/agc2/fixed_digital_level_estimator.cc
     modules/audio_processing/agc2/gain_applier.cc
+    modules/audio_processing/agc2/gain_map_internal.h
     modules/audio_processing/agc2/interpolated_gain_curve.cc
     modules/audio_processing/agc2/limiter.cc
     modules/audio_processing/agc2/limiter_db_gain_curve.cc
     modules/audio_processing/agc2/noise_level_estimator.cc
-    modules/audio_processing/agc2/noise_spectrum_estimator.cc
     modules/audio_processing/agc2/saturation_protector.cc
     modules/audio_processing/agc2/saturation_protector_buffer.cc
     modules/audio_processing/agc2/saturation_protector_buffer.h
-    modules/audio_processing/agc2/signal_classifier.cc
-    modules/audio_processing/agc2/vad_with_level.cc
+    modules/audio_processing/agc2/speech_probability_buffer.cc
+    modules/audio_processing/agc2/speech_probability_buffer.h
+    modules/audio_processing/agc2/vad_wrapper.cc
+    modules/audio_processing/agc2/vad_wrapper.h
     modules/audio_processing/agc2/vector_float_frame.cc
     modules/audio_processing/agc2/rnn_vad/auto_correlation.cc
-    # modules/audio_processing/agc2/rnn_vad/common.cc
     modules/audio_processing/agc2/rnn_vad/features_extraction.cc
     modules/audio_processing/agc2/rnn_vad/lp_residual.cc
     modules/audio_processing/agc2/rnn_vad/pitch_search.cc
@@ -1171,7 +1210,6 @@ PRIVATE
     modules/audio_processing/capture_levels_adjuster/audio_samples_scaler.h
     modules/audio_processing/capture_levels_adjuster/capture_levels_adjuster.cc
     modules/audio_processing/capture_levels_adjuster/capture_levels_adjuster.h
-    modules/audio_processing/common.h
     modules/audio_processing/echo_control_mobile_impl.cc
     modules/audio_processing/echo_control_mobile_impl.h
     modules/audio_processing/echo_detector/circular_buffer.cc
@@ -1204,19 +1242,11 @@ PRIVATE
     modules/audio_processing/include/audio_processing.h
     modules/audio_processing/include/audio_processing_statistics.cc
     modules/audio_processing/include/audio_processing_statistics.h
-    modules/audio_processing/include/config.cc
-    modules/audio_processing/include/config.h
-    modules/audio_processing/level_estimator.cc
-    modules/audio_processing/level_estimator.h
     modules/audio_processing/optionally_built_submodule_creators.cc
     modules/audio_processing/optionally_built_submodule_creators.h
     modules/audio_processing/render_queue_item_verifier.h
     modules/audio_processing/residual_echo_detector.cc
     modules/audio_processing/residual_echo_detector.h
-    modules/audio_processing/typing_detection.cc
-    modules/audio_processing/typing_detection.h
-    modules/audio_processing/voice_detection.cc
-    modules/audio_processing/voice_detection.h
     modules/audio_processing/ns/fast_math.cc
     modules/audio_processing/ns/histograms.cc
     modules/audio_processing/ns/noise_estimator.cc
@@ -1238,20 +1268,14 @@ PRIVATE
     modules/audio_processing/transient/moving_moments.cc
     modules/audio_processing/transient/transient_detector.cc
     modules/audio_processing/transient/transient_suppressor_impl.cc
-    # modules/audio_processing/transient/transient_suppressor_creator.cc
-    # modules/audio_processing/transient/transient_suppressor_creator.h
+    modules/audio_processing/transient/voice_probability_delay_unit.cc
+    modules/audio_processing/transient/voice_probability_delay_unit.h
     modules/audio_processing/transient/wpd_node.cc
     modules/audio_processing/transient/wpd_tree.cc
     modules/audio_processing/utility/cascaded_biquad_filter.cc
     modules/audio_processing/utility/delay_estimator.cc
     modules/audio_processing/utility/delay_estimator_wrapper.cc
     modules/audio_processing/utility/pffft_wrapper.cc
-    #modules/audio_processing/utility/ooura_fft.cc
-    #modules/audio_processing/utility/ooura_fft.h
-    #modules/audio_processing/utility/ooura_fft_tables_common.h
-    #modules/audio_processing/utility/ooura_fft_neon.cc
-    #modules/audio_processing/utility/ooura_fft_sse2.cc
-    #modules/audio_processing/utility/ooura_fft_tables_neon_sse2.h
     modules/audio_processing/vad/gmm.cc
     modules/audio_processing/vad/pitch_based_vad.cc
     modules/audio_processing/vad/pitch_internal.cc
@@ -1267,9 +1291,13 @@ PRIVATE
     modules/congestion_controller/pcc/rtt_tracker.cc
     modules/congestion_controller/pcc/utility_function.cc
     modules/congestion_controller/receive_side_congestion_controller.cc
+    modules/congestion_controller/remb_throttler.cc
+    modules/congestion_controller/remb_throttler.h
     modules/congestion_controller/rtp/control_handler.cc
     modules/congestion_controller/rtp/transport_feedback_adapter.cc
     modules/congestion_controller/rtp/transport_feedback_demuxer.cc
+    modules/congestion_controller/goog_cc/loss_based_bwe_v2.cc
+    modules/congestion_controller/goog_cc/loss_based_bwe_v2.h
     modules/congestion_controller/goog_cc/acknowledged_bitrate_estimator.cc
     modules/congestion_controller/goog_cc/acknowledged_bitrate_estimator_interface.cc
     modules/congestion_controller/goog_cc/alr_detector.cc
@@ -1286,26 +1314,26 @@ PRIVATE
     modules/congestion_controller/goog_cc/robust_throughput_estimator.cc
     modules/congestion_controller/goog_cc/send_side_bandwidth_estimation.cc
     modules/congestion_controller/goog_cc/trendline_estimator.cc
-    # modules/include/module_common_types.cc
     modules/pacing/bitrate_prober.cc
     modules/pacing/interval_budget.cc
-    modules/pacing/paced_sender.cc
     modules/pacing/pacing_controller.cc
     modules/pacing/packet_router.cc
-    modules/pacing/round_robin_packet_queue.cc
+    modules/pacing/prioritized_packet_queue.cc
+    modules/pacing/prioritized_packet_queue.h
     modules/pacing/task_queue_paced_sender.cc
     modules/rtp_rtcp/include/flexfec_receiver.h
     modules/rtp_rtcp/include/flexfec_sender.h
     modules/rtp_rtcp/include/receive_statistics.h
     modules/rtp_rtcp/include/remote_ntp_time_estimator.h
     modules/rtp_rtcp/include/rtp_rtcp.h
-    modules/rtp_rtcp/include/ulpfec_receiver.h
     modules/rtp_rtcp/source/active_decode_targets_helper.cc
     modules/rtp_rtcp/source/active_decode_targets_helper.h
-    modules/rtp_rtcp/source/absolute_capture_time_receiver.cc
-    modules/rtp_rtcp/source/absolute_capture_time_receiver.h
+    modules/rtp_rtcp/source/absolute_capture_time_interpolator.cc
+    modules/rtp_rtcp/source/absolute_capture_time_interpolator.h
     modules/rtp_rtcp/source/absolute_capture_time_sender.cc
     modules/rtp_rtcp/source/absolute_capture_time_sender.h
+    modules/rtp_rtcp/source/capture_clock_offset_updater.cc
+    modules/rtp_rtcp/source/capture_clock_offset_updater.h
     modules/rtp_rtcp/source/create_video_rtp_depacketizer.cc
     modules/rtp_rtcp/source/create_video_rtp_depacketizer.h
     modules/rtp_rtcp/source/dtmf_queue.cc
@@ -1343,8 +1371,6 @@ PRIVATE
     modules/rtp_rtcp/source/rtp_format_h264.h
     modules/rtp_rtcp/source/rtp_format_h265.cc
     modules/rtp_rtcp/source/rtp_format_h265.h
-    modules/rtp_rtcp/source/video_rtp_depacketizer_h265.cc
-    modules/rtp_rtcp/source/video_rtp_depacketizer_h265.h
     modules/rtp_rtcp/source/rtp_format_video_generic.cc
     modules/rtp_rtcp/source/rtp_format_video_generic.h
     modules/rtp_rtcp/source/rtp_format_vp8.cc
@@ -1362,6 +1388,10 @@ PRIVATE
     modules/rtp_rtcp/source/rtp_rtcp_impl.h
     modules/rtp_rtcp/source/rtp_rtcp_impl2.cc
     modules/rtp_rtcp/source/rtp_rtcp_impl2.h
+    modules/rtp_rtcp/source/rtp_packetizer_av1_test_helper.cc
+    modules/rtp_rtcp/source/rtp_packetizer_av1_test_helper.h
+    modules/rtp_rtcp/source/rtp_util.cc
+    modules/rtp_rtcp/source/rtp_util.h
     modules/rtp_rtcp/source/rtp_sender.cc
     modules/rtp_rtcp/source/rtp_sender.h
     modules/rtp_rtcp/source/rtp_sender_audio.cc
@@ -1378,22 +1408,18 @@ PRIVATE
     modules/rtp_rtcp/source/rtp_sequence_number_map.h
     modules/rtp_rtcp/source/rtp_video_layers_allocation_extension.cc
     modules/rtp_rtcp/source/rtp_video_layers_allocation_extension.h
-    modules/rtp_rtcp/source/rtp_utility.cc
-    modules/rtp_rtcp/source/rtp_utility.h
     modules/rtp_rtcp/source/source_tracker.cc
     modules/rtp_rtcp/source/source_tracker.h
     modules/rtp_rtcp/source/time_util.cc
     modules/rtp_rtcp/source/time_util.h
     modules/rtp_rtcp/source/tmmbr_help.cc
     modules/rtp_rtcp/source/tmmbr_help.h
-    # modules/rtp_rtcp/source/transformable_encoded_frame.cc
-    # modules/rtp_rtcp/source/transformable_encoded_frame.h
     modules/rtp_rtcp/source/ulpfec_generator.cc
     modules/rtp_rtcp/source/ulpfec_generator.h
     modules/rtp_rtcp/source/ulpfec_header_reader_writer.cc
     modules/rtp_rtcp/source/ulpfec_header_reader_writer.h
-    modules/rtp_rtcp/source/ulpfec_receiver_impl.cc
-    modules/rtp_rtcp/source/ulpfec_receiver_impl.h
+    modules/rtp_rtcp/source/ulpfec_receiver.cc
+    modules/rtp_rtcp/source/ulpfec_receiver.h
     modules/rtp_rtcp/source/video_fec_generator.h
     modules/rtp_rtcp/source/video_rtp_depacketizer.cc
     modules/rtp_rtcp/source/video_rtp_depacketizer.h
@@ -1403,6 +1429,8 @@ PRIVATE
     modules/rtp_rtcp/source/video_rtp_depacketizer_generic.h
     modules/rtp_rtcp/source/video_rtp_depacketizer_h264.cc
     modules/rtp_rtcp/source/video_rtp_depacketizer_h264.h
+    modules/rtp_rtcp/source/video_rtp_depacketizer_h265.cc
+    modules/rtp_rtcp/source/video_rtp_depacketizer_h265.h
     modules/rtp_rtcp/source/video_rtp_depacketizer_raw.cc
     modules/rtp_rtcp/source/video_rtp_depacketizer_raw.h
     modules/rtp_rtcp/source/video_rtp_depacketizer_vp8.cc
@@ -1417,7 +1445,6 @@ PRIVATE
     modules/rtp_rtcp/source/rtcp_packet/common_header.cc
     modules/rtp_rtcp/source/rtcp_packet/compound_packet.cc
     modules/rtp_rtcp/source/rtcp_packet/dlrr.cc
-    modules/rtp_rtcp/source/rtcp_packet/extended_jitter_report.cc
     modules/rtp_rtcp/source/rtcp_packet/extended_reports.cc
     modules/rtp_rtcp/source/rtcp_packet/fir.cc
     modules/rtp_rtcp/source/rtcp_packet/loss_notification.cc
@@ -1452,12 +1479,15 @@ PRIVATE
     modules/rtp_rtcp/source/rtp_packet_to_send.cc
     modules/rtp_rtcp/source/rtp_video_header.cc
     modules/rtp_rtcp/source/rtp_video_header.h
-    # modules/utility/source/helpers_android.cc
-    # modules/utility/source/jvm_android.cc
-    modules/utility/source/process_thread_impl.cc
+    modules/utility/maybe_worker_thread.cc
+    modules/utility/maybe_worker_thread.h
     modules/video_capture/device_info_impl.cc
     modules/video_capture/linux/device_info_linux.cc
+    modules/video_capture/linux/device_info_v4l2.cc
+    modules/video_capture/linux/device_info_v4l2.h
     modules/video_capture/linux/video_capture_linux.cc
+    modules/video_capture/linux/video_capture_v4l2.cc
+    modules/video_capture/linux/video_capture_v4l2.h
     modules/video_capture/windows/device_info_ds.cc
     modules/video_capture/windows/device_info_ds.h
     modules/video_capture/windows/help_functions_ds.cc
@@ -1471,8 +1501,6 @@ PRIVATE
     modules/video_capture/video_capture_impl.cc
     modules/video_coding/chain_diff_calculator.cc
     modules/video_coding/chain_diff_calculator.h
-    modules/video_coding/codec_timer.cc
-    modules/video_coding/codec_timer.h
     modules/video_coding/decoder_database.cc
     modules/video_coding/decoder_database.h
     modules/video_coding/fec_controller_default.cc
@@ -1480,10 +1508,14 @@ PRIVATE
     modules/video_coding/fec_rate_table.h
     modules/video_coding/frame_buffer2.cc
     modules/video_coding/frame_buffer2.h
+    modules/video_coding/frame_helpers.cc
+    modules/video_coding/frame_helpers.h
     modules/video_coding/frame_object.cc
     modules/video_coding/frame_object.h
     modules/video_coding/generic_decoder.cc
     modules/video_coding/generic_decoder.h
+    modules/video_coding/h264_packet_buffer.cc
+    modules/video_coding/h264_packet_buffer.h
     modules/video_coding/h264_sprop_parameter_sets.cc
     modules/video_coding/h264_sprop_parameter_sets.h
     modules/video_coding/h264_sps_pps_tracker.cc
@@ -1496,21 +1528,15 @@ PRIVATE
     modules/video_coding/include/video_coding_defines.h
     modules/video_coding/include/video_error_codes.h
     modules/video_coding/video_coding_defines.cc
-    modules/video_coding/inter_frame_delay.cc
-    modules/video_coding/inter_frame_delay.h
     modules/video_coding/internal_defines.h
-    modules/video_coding/jitter_estimator.cc
-    modules/video_coding/jitter_estimator.h
     modules/video_coding/loss_notification_controller.cc
     modules/video_coding/loss_notification_controller.h
     modules/video_coding/media_opt_util.cc
     modules/video_coding/media_opt_util.h
+    modules/video_coding/nack_requester.cc
+    modules/video_coding/nack_requester.h
     modules/video_coding/histogram.cc
     modules/video_coding/histogram.h
-    modules/video_coding/deprecated/nack_module.h
-    modules/video_coding/deprecated/nack_module.cc
-    modules/video_coding/nack_module2.cc
-    modules/video_coding/nack_module2.h
     modules/video_coding/encoded_frame.cc
     modules/video_coding/encoded_frame.h
     modules/video_coding/packet_buffer.cc
@@ -1527,21 +1553,11 @@ PRIVATE
     modules/video_coding/rtp_vp8_ref_finder.h
     modules/video_coding/rtp_vp9_ref_finder.cc
     modules/video_coding/rtp_vp9_ref_finder.h
-    modules/video_coding/rtt_filter.cc
-    modules/video_coding/rtt_filter.h
-    modules/video_coding/timestamp_map.cc
-    modules/video_coding/timestamp_map.h
-    modules/video_coding/timing.cc
-    modules/video_coding/timing.h
-    modules/video_coding/unique_timestamp_counter.cc
-    modules/video_coding/unique_timestamp_counter.h
     modules/video_coding/video_codec_initializer.cc
     modules/video_coding/video_receiver2.cc
     modules/video_coding/video_receiver2.h
     modules/video_coding/frame_dependencies_calculator.cc
     modules/video_coding/frame_dependencies_calculator.h
-    modules/video_coding/codecs/av1/libaom_av1_decoder_absent.cc
-    modules/video_coding/codecs/av1/libaom_av1_encoder_absent.cc
     modules/video_coding/codecs/av1/av1_svc_config.cc
     modules/video_coding/codecs/av1/av1_svc_config.h
     modules/video_coding/codecs/h264/h264.cc
@@ -1554,9 +1570,26 @@ PRIVATE
     modules/video_coding/codecs/multiplex/multiplex_encoder_adapter.cc
     modules/video_coding/codecs/interface/libvpx_interface.cc
     modules/video_coding/codecs/interface/libvpx_interface.h
+    modules/video_coding/timing/codec_timer.cc
+    modules/video_coding/timing/codec_timer.h
+    modules/video_coding/timing/frame_delay_variation_kalman_filter.cc
+    modules/video_coding/timing/frame_delay_variation_kalman_filter.h
+    modules/video_coding/timing/inter_frame_delay.cc
+    modules/video_coding/timing/inter_frame_delay.h
+    modules/video_coding/timing/jitter_estimator.cc
+    modules/video_coding/timing/jitter_estimator.h
+    modules/video_coding/timing/rtt_filter.cc
+    modules/video_coding/timing/rtt_filter.h
+    modules/video_coding/timing/timestamp_extrapolator.cc
+    modules/video_coding/timing/timestamp_extrapolator.h
+    modules/video_coding/timing/timing.cc
+    modules/video_coding/timing/timing.h
+    modules/video_coding/utility/bandwidth_quality_scaler.cc
+    modules/video_coding/utility/bandwidth_quality_scaler.h
     modules/video_coding/utility/decoded_frames_history.cc
     modules/video_coding/utility/frame_dropper.cc
-    modules/video_coding/utility/framerate_controller.cc
+    modules/video_coding/utility/framerate_controller_deprecated.cc
+    modules/video_coding/utility/ivf_defines.h
     modules/video_coding/utility/ivf_file_reader.cc
     modules/video_coding/utility/ivf_file_writer.cc
     modules/video_coding/utility/qp_parser.cc
@@ -1564,48 +1597,35 @@ PRIVATE
     modules/video_coding/utility/quality_scaler.cc
     modules/video_coding/utility/simulcast_rate_allocator.cc
     modules/video_coding/utility/simulcast_utility.cc
+    modules/video_coding/utility/vp8_constants.h
     modules/video_coding/utility/vp8_header_parser.cc
+    modules/video_coding/utility/vp9_constants.h
     modules/video_coding/utility/vp9_uncompressed_header_parser.cc
     modules/video_coding/codecs/vp8/default_temporal_layers.cc
-    # modules/video_coding/codecs/vp8/libvpx_interface.cc
     modules/video_coding/codecs/vp8/libvpx_vp8_decoder.cc
     modules/video_coding/codecs/vp8/libvpx_vp8_encoder.cc
     modules/video_coding/codecs/vp8/screenshare_layers.cc
     modules/video_coding/codecs/vp8/temporal_layers_checker.cc
+    modules/video_coding/codecs/vp8/vp8_scalability.cc
+    modules/video_coding/codecs/vp8/vp8_scalability.h
     modules/video_coding/codecs/vp9/include/vp9.h
     modules/video_coding/codecs/vp9/libvpx_vp9_decoder.cc
     modules/video_coding/codecs/vp9/libvpx_vp9_decoder.h
     modules/video_coding/codecs/vp9/libvpx_vp9_encoder.cc
     modules/video_coding/codecs/vp9/libvpx_vp9_encoder.h
     modules/video_coding/codecs/vp9/svc_config.cc
-    # modules/video_coding/codecs/vp9/svc_rate_allocator.cc
     modules/video_coding/codecs/vp9/vp9.cc
     modules/video_coding/codecs/vp9/vp9_frame_buffer_pool.cc
-    # modules/video_coding/codecs/vp9/vp9_impl.cc
     modules/video_coding/svc/create_scalability_structure.cc
     modules/video_coding/svc/create_scalability_structure.h
+    modules/video_coding/svc/scalability_mode_util.cc
+    modules/video_coding/svc/scalability_mode_util.h
     modules/video_coding/svc/scalability_structure_full_svc.cc
     modules/video_coding/svc/scalability_structure_full_svc.h
     modules/video_coding/svc/scalability_structure_key_svc.cc
     modules/video_coding/svc/scalability_structure_key_svc.h
-    # modules/video_coding/svc/scalability_structure_l1t2.cc
-    # modules/video_coding/svc/scalability_structure_l1t2.h
-    # modules/video_coding/svc/scalability_structure_l1t3.cc
-    # modules/video_coding/svc/scalability_structure_l1t3.h
-    # modules/video_coding/svc/scalability_structure_l2t1.cc
-    # modules/video_coding/svc/scalability_structure_l2t1.h
-    # modules/video_coding/svc/scalability_structure_l2t1h.cc
-    # modules/video_coding/svc/scalability_structure_l2t1h.h
-    # modules/video_coding/svc/scalability_structure_l2t2.cc
-    # modules/video_coding/svc/scalability_structure_l2t2.h
     modules/video_coding/svc/scalability_structure_l2t2_key_shift.cc
     modules/video_coding/svc/scalability_structure_l2t2_key_shift.h
-    # modules/video_coding/svc/scalability_structure_l3t1.cc
-    # modules/video_coding/svc/scalability_structure_l3t1.h
-    # modules/video_coding/svc/scalability_structure_l3t3.cc
-    # modules/video_coding/svc/scalability_structure_l3t3.h
-    # modules/video_coding/svc/scalability_structure_s2t1.cc
-    # modules/video_coding/svc/scalability_structure_s2t1.h
     modules/video_coding/svc/scalability_structure_simulcast.cc
     modules/video_coding/svc/scalability_structure_simulcast.h
     modules/video_coding/svc/scalable_video_controller.h
@@ -1613,13 +1633,164 @@ PRIVATE
     modules/video_coding/svc/scalable_video_controller_no_layering.h
     modules/video_coding/svc/svc_rate_allocator.cc
     modules/video_coding/svc/svc_rate_allocator.h
-    modules/video_processing/util/denoiser_filter.cc
-    modules/video_processing/util/denoiser_filter_c.cc
-    modules/video_processing/util/denoiser_filter_neon.cc
-    modules/video_processing/util/denoiser_filter_sse2.cc
-    modules/video_processing/util/noise_estimation.cc
-    modules/video_processing/util/skin_detection.cc
-    modules/video_processing/video_denoiser.cc
+    net/dcsctp/common/internal_types.h
+    net/dcsctp/common/sequence_numbers.h
+    net/dcsctp/common/math.h
+    net/dcsctp/common/str_join.h
+    net/dcsctp/public/dcsctp_socket_factory.cc
+    net/dcsctp/public/dcsctp_handover_state.cc
+    net/dcsctp/public/text_pcap_packet_observer.cc
+    net/dcsctp/public/dcsctp_handover_state.h
+    net/dcsctp/public/dcsctp_socket_factory.h
+    net/dcsctp/public/text_pcap_packet_observer.h
+    net/dcsctp/public/dcsctp_options.h
+    net/dcsctp/public/dcsctp_message.h
+    net/dcsctp/public/mock_dcsctp_socket_factory.h
+    net/dcsctp/public/packet_observer.h
+    net/dcsctp/public/timeout.h
+    net/dcsctp/public/types.h
+    net/dcsctp/public/dcsctp_socket.h
+    net/dcsctp/socket/callback_deferrer.cc
+    net/dcsctp/socket/dcsctp_socket.cc
+    net/dcsctp/socket/heartbeat_handler.cc
+    net/dcsctp/socket/packet_sender.cc
+    net/dcsctp/socket/state_cookie.cc
+    net/dcsctp/socket/stream_reset_handler.cc
+    net/dcsctp/socket/transmission_control_block.cc
+    net/dcsctp/socket/callback_deferrer.h
+    net/dcsctp/socket/stream_reset_handler.h
+    net/dcsctp/socket/state_cookie.h
+    net/dcsctp/socket/heartbeat_handler.h
+    net/dcsctp/socket/dcsctp_socket.h
+    net/dcsctp/socket/transmission_control_block.h
+    net/dcsctp/socket/packet_sender.h
+    net/dcsctp/socket/capabilities.h
+    net/dcsctp/socket/context.h
+    net/dcsctp/packet/chunk_validators.cc
+    net/dcsctp/packet/crc32c.cc
+    net/dcsctp/packet/sctp_packet.cc
+    net/dcsctp/packet/tlv_trait.cc
+    net/dcsctp/packet/chunk/abort_chunk.cc
+    net/dcsctp/packet/chunk/chunk.cc
+    net/dcsctp/packet/chunk/cookie_ack_chunk.cc
+    net/dcsctp/packet/chunk/cookie_echo_chunk.cc
+    net/dcsctp/packet/chunk/data_chunk.cc
+    net/dcsctp/packet/chunk/error_chunk.cc
+    net/dcsctp/packet/chunk/forward_tsn_chunk.cc
+    net/dcsctp/packet/chunk/heartbeat_ack_chunk.cc
+    net/dcsctp/packet/chunk/heartbeat_request_chunk.cc
+    net/dcsctp/packet/chunk/idata_chunk.cc
+    net/dcsctp/packet/chunk/iforward_tsn_chunk.cc
+    net/dcsctp/packet/chunk/init_ack_chunk.cc
+    net/dcsctp/packet/chunk/init_chunk.cc
+    net/dcsctp/packet/chunk/reconfig_chunk.cc
+    net/dcsctp/packet/chunk/sack_chunk.cc
+    net/dcsctp/packet/chunk/shutdown_ack_chunk.cc
+    net/dcsctp/packet/chunk/shutdown_chunk.cc
+    net/dcsctp/packet/chunk/shutdown_complete_chunk.cc
+    net/dcsctp/packet/error_cause/cookie_received_while_shutting_down_cause.cc
+    net/dcsctp/packet/error_cause/error_cause.cc
+    net/dcsctp/packet/error_cause/invalid_mandatory_parameter_cause.cc
+    net/dcsctp/packet/error_cause/invalid_stream_identifier_cause.cc
+    net/dcsctp/packet/error_cause/missing_mandatory_parameter_cause.cc
+    net/dcsctp/packet/error_cause/no_user_data_cause.cc
+    net/dcsctp/packet/error_cause/out_of_resource_error_cause.cc
+    net/dcsctp/packet/error_cause/protocol_violation_cause.cc
+    net/dcsctp/packet/error_cause/stale_cookie_error_cause.cc
+    net/dcsctp/packet/error_cause/restart_of_an_association_with_new_address_cause.cc
+    net/dcsctp/packet/error_cause/unrecognized_chunk_type_cause.cc
+    net/dcsctp/packet/error_cause/unrecognized_parameter_cause.cc
+    net/dcsctp/packet/error_cause/unresolvable_address_cause.cc
+    net/dcsctp/packet/error_cause/user_initiated_abort_cause.cc
+    net/dcsctp/packet/parameter/add_incoming_streams_request_parameter.cc
+    net/dcsctp/packet/parameter/add_outgoing_streams_request_parameter.cc
+    net/dcsctp/packet/parameter/forward_tsn_supported_parameter.cc
+    net/dcsctp/packet/parameter/heartbeat_info_parameter.cc
+    net/dcsctp/packet/parameter/incoming_ssn_reset_request_parameter.cc
+    net/dcsctp/packet/parameter/outgoing_ssn_reset_request_parameter.cc
+    net/dcsctp/packet/parameter/parameter.cc
+    net/dcsctp/packet/parameter/reconfiguration_response_parameter.cc
+    net/dcsctp/packet/parameter/ssn_tsn_reset_request_parameter.cc
+    net/dcsctp/packet/parameter/state_cookie_parameter.cc
+    net/dcsctp/packet/parameter/supported_extensions_parameter.cc
+    net/dcsctp/packet/parameter/forward_tsn_supported_parameter.h
+    net/dcsctp/packet/parameter/parameter.h
+    net/dcsctp/packet/parameter/heartbeat_info_parameter.h
+    net/dcsctp/packet/parameter/incoming_ssn_reset_request_parameter.h
+    net/dcsctp/packet/parameter/add_outgoing_streams_request_parameter.h
+    net/dcsctp/packet/error_cause/user_initiated_abort_cause.h
+    net/dcsctp/packet/error_cause/unresolvable_address_cause.h
+    net/dcsctp/packet/error_cause/unrecognized_parameter_cause.h
+    net/dcsctp/packet/error_cause/missing_mandatory_parameter_cause.h
+    net/dcsctp/packet/error_cause/stale_cookie_error_cause.h
+    net/dcsctp/packet/error_cause/out_of_resource_error_cause.h
+    net/dcsctp/packet/error_cause/cookie_received_while_shutting_down_cause.h
+    net/dcsctp/packet/chunk/shutdown_complete_chunk.h
+    net/dcsctp/packet/chunk/shutdown_ack_chunk.h
+    net/dcsctp/packet/chunk/sack_chunk.h
+    net/dcsctp/packet/chunk/reconfig_chunk.h
+    net/dcsctp/packet/chunk/idata_chunk.h
+    net/dcsctp/packet/chunk/heartbeat_ack_chunk.h
+    net/dcsctp/packet/chunk/forward_tsn_chunk.h
+    net/dcsctp/packet/chunk/error_chunk.h
+    net/dcsctp/packet/crc32c.h
+    net/dcsctp/packet/chunk/cookie_echo_chunk.h
+    net/dcsctp/packet/chunk/cookie_ack_chunk.h
+    net/dcsctp/packet/chunk/chunk.h
+    net/dcsctp/packet/tlv_trait.h
+    net/dcsctp/packet/sctp_packet.h
+    net/dcsctp/packet/parameter/state_cookie_parameter.h
+    net/dcsctp/packet/error_cause/restart_of_an_association_with_new_address_cause.h
+    net/dcsctp/packet/parameter/outgoing_ssn_reset_request_parameter.h
+    net/dcsctp/packet/error_cause/error_cause.h
+    net/dcsctp/packet/error_cause/unrecognized_chunk_type_cause.h
+    net/dcsctp/packet/parameter/ssn_tsn_reset_request_parameter.h
+    net/dcsctp/packet/chunk/init_ack_chunk.h
+    net/dcsctp/packet/parameter/reconfiguration_response_parameter.h
+    net/dcsctp/packet/error_cause/invalid_mandatory_parameter_cause.h
+    net/dcsctp/packet/chunk/data_chunk.h
+    net/dcsctp/packet/chunk_validators.h
+    net/dcsctp/packet/chunk/iforward_tsn_chunk.h
+    net/dcsctp/packet/error_cause/invalid_stream_identifier_cause.h
+    net/dcsctp/packet/chunk/shutdown_chunk.h
+    net/dcsctp/packet/chunk/init_chunk.h
+    net/dcsctp/packet/parameter/supported_extensions_parameter.h
+    net/dcsctp/packet/parameter/add_incoming_streams_request_parameter.h
+    net/dcsctp/packet/error_cause/protocol_violation_cause.h
+    net/dcsctp/packet/chunk/heartbeat_request_chunk.h
+    net/dcsctp/packet/chunk/abort_chunk.h
+    net/dcsctp/packet/error_cause/no_user_data_cause.h
+    net/dcsctp/packet/bounded_byte_reader.h
+    net/dcsctp/packet/data.h
+    net/dcsctp/packet/bounded_byte_writer.h
+    net/dcsctp/packet/chunk/data_common.h
+    net/dcsctp/packet/chunk/forward_tsn_common.h
+    net/dcsctp/rx/data_tracker.cc
+    net/dcsctp/rx/data_tracker.h
+    net/dcsctp/rx/interleaved_reassembly_streams.cc
+    net/dcsctp/rx/interleaved_reassembly_streams.h
+    net/dcsctp/rx/reassembly_queue.cc
+    net/dcsctp/rx/reassembly_queue.h
+    net/dcsctp/rx/traditional_reassembly_streams.cc
+    net/dcsctp/rx/traditional_reassembly_streams.h
+    net/dcsctp/rx/reassembly_streams.h
+    net/dcsctp/tx/outstanding_data.cc
+    net/dcsctp/tx/retransmission_error_counter.cc
+    net/dcsctp/tx/retransmission_queue.cc
+    net/dcsctp/tx/retransmission_timeout.cc
+    net/dcsctp/tx/rr_send_queue.cc
+    net/dcsctp/tx/retransmission_timeout.h
+    net/dcsctp/tx/retransmission_queue.h
+    net/dcsctp/tx/retransmission_error_counter.h
+    net/dcsctp/tx/outstanding_data.h
+    net/dcsctp/tx/rr_send_queue.h
+    net/dcsctp/tx/send_queue.h
+    net/dcsctp/tx/stream_scheduler.cc
+    net/dcsctp/tx/stream_scheduler.h
+    net/dcsctp/timer/task_queue_timeout.cc
+    net/dcsctp/timer/timer.cc
+    net/dcsctp/timer/task_queue_timeout.h
+    net/dcsctp/timer/timer.h
     call/adaptation/resource_adaptation_processor_interface.cc
     call/adaptation/video_source_restrictions.cc
     call/audio_receive_stream.cc
@@ -1633,12 +1804,16 @@ PRIVATE
     call/fake_network_pipe.cc
     call/flexfec_receive_stream.cc
     call/flexfec_receive_stream_impl.cc
+    call/receive_stream.h
     call/receive_time_calculator.cc
     call/rtp_bitrate_configurator.cc
     call/rtp_config.cc
     call/rtp_demuxer.cc
     call/rtp_payload_params.cc
     call/rtp_stream_receiver_controller.cc
+    call/rtp_transport_config.h
+    call/rtp_transport_controller_send_factory.h
+    call/rtp_transport_controller_send_factory_interface.h
     call/rtp_transport_controller_send.cc
     call/rtp_video_sender.cc
     call/rtx_receive_stream.cc
@@ -1725,33 +1900,18 @@ PRIVATE
     common_video/bitrate_adjuster.cc
     common_video/frame_rate_estimator.cc
     common_video/frame_rate_estimator.h
+    common_video/framerate_controller.cc
+    common_video/framerate_controller.h
     common_video/h264/h264_bitstream_parser.cc
     common_video/h264/h264_bitstream_parser.h
     common_video/h264/h264_common.cc
     common_video/h264/h264_common.h
     common_video/h264/pps_parser.cc
     common_video/h264/pps_parser.h
-    common_video/h264/prefix_parser.cc
-    common_video/h264/prefix_parser.h
-    common_video/h264/profile_level_id.h
     common_video/h264/sps_parser.cc
     common_video/h264/sps_parser.h
     common_video/h264/sps_vui_rewriter.cc
     common_video/h264/sps_vui_rewriter.h
-    # common_video/i420_buffer_pool.cc
-    common_video/include/bitrate_adjuster.h
-    # common_video/include/i420_buffer_pool.h
-    common_video/include/incoming_video_stream.h
-    common_video/include/quality_limitation_reason.h
-    # common_video/include/video_frame.h
-    common_video/include/video_frame_buffer.h
-    common_video/incoming_video_stream.cc
-    common_video/libyuv/include/webrtc_libyuv.h
-    common_video/libyuv/webrtc_libyuv.cc
-    common_video/video_frame_buffer.cc
-    common_video/video_frame_buffer_pool.cc
-    common_video/video_render_frames.cc
-    common_video/video_render_frames.h
     common_video/h265/h265_bitstream_parser.cc
     common_video/h265/h265_bitstream_parser.h
     common_video/h265/h265_common.cc
@@ -1762,8 +1922,19 @@ PRIVATE
     common_video/h265/h265_sps_parser.h
     common_video/h265/h265_vps_parser.cc
     common_video/h265/h265_vps_parser.h
+    common_video/h265/legacy_bit_buffer.cc
+    common_video/h265/legacy_bit_buffer.h
+    common_video/include/bitrate_adjuster.h
+    common_video/include/quality_limitation_reason.h
+    common_video/include/video_frame_buffer.h
+    common_video/libyuv/include/webrtc_libyuv.h
+    common_video/libyuv/webrtc_libyuv.cc
+    common_video/video_frame_buffer.cc
+    common_video/video_frame_buffer_pool.cc
     common_video/generic_frame_descriptor/generic_frame_info.cc
     common_video/generic_frame_descriptor/generic_frame_info.h
+    p2p/base/active_ice_controller_factory_interface.h
+    p2p/base/active_ice_controller_interface.h
     p2p/base/async_stun_tcp_socket.cc
     p2p/base/basic_async_resolver_factory.cc
     p2p/base/basic_ice_controller.cc
@@ -1773,10 +1944,15 @@ PRIVATE
     p2p/base/default_ice_transport_factory.cc
     p2p/base/dtls_transport.cc
     p2p/base/dtls_transport_internal.cc
+    p2p/base/ice_agent_interface.h
     p2p/base/ice_controller_interface.cc
     p2p/base/ice_credentials_iterator.cc
+    p2p/base/ice_switch_reason.cc
+    p2p/base/ice_switch_reason.h
     p2p/base/ice_transport_internal.cc
-    p2p/base/mdns_message.cc
+    p2p/base/mock_active_ice_controller.h
+    p2p/base/mock_ice_agent.h
+    p2p/base/mock_ice_controller.h
     p2p/base/p2p_constants.cc
     p2p/base/p2p_transport_channel.cc
     p2p/base/packet_transport_internal.cc
@@ -1794,15 +1970,35 @@ PRIVATE
     p2p/base/transport_description_factory.cc
     p2p/base/turn_port.cc
     p2p/base/turn_server.cc
+    p2p/base/wrapping_active_ice_controller.cc
+    p2p/base/wrapping_active_ice_controller.h
     p2p/client/basic_port_allocator.cc
     p2p/client/turn_port_factory.cc
     p2p/stunprober/stun_prober.cc
+    logging/rtc_event_log/encoder/bit_writer.cc
+    logging/rtc_event_log/encoder/bit_writer.h
     logging/rtc_event_log/encoder/blob_encoding.cc
     logging/rtc_event_log/encoder/delta_encoding.cc
     logging/rtc_event_log/encoder/rtc_event_log_encoder_common.cc
     logging/rtc_event_log/encoder/rtc_event_log_encoder_legacy.cc
     logging/rtc_event_log/encoder/rtc_event_log_encoder_new_format.cc
+    logging/rtc_event_log/encoder/rtc_event_log_encoder_v3.cc
+    logging/rtc_event_log/encoder/rtc_event_log_encoder_v3.h
     logging/rtc_event_log/encoder/var_int.cc
+    logging/rtc_event_log/events/logged_rtp_rtcp.h
+    logging/rtc_event_log/events/fixed_length_encoding_parameters_v3.cc
+    logging/rtc_event_log/events/fixed_length_encoding_parameters_v3.h
+    logging/rtc_event_log/events/rtc_event_begin_log.cc
+    logging/rtc_event_log/events/rtc_event_begin_log.h
+    logging/rtc_event_log/events/rtc_event_definition.h
+    logging/rtc_event_log/events/rtc_event_end_log.cc
+    logging/rtc_event_log/events/rtc_event_end_log.h
+    logging/rtc_event_log/events/rtc_event_field_encoding.cc
+    logging/rtc_event_log/events/rtc_event_field_encoding.h
+    logging/rtc_event_log/events/rtc_event_field_encoding_parser.cc
+    logging/rtc_event_log/events/rtc_event_field_encoding_parser.h
+    logging/rtc_event_log/events/rtc_event_field_extraction.cc
+    logging/rtc_event_log/events/rtc_event_field_extraction.h
     logging/rtc_event_log/events/rtc_event_alr_state.cc
     logging/rtc_event_log/events/rtc_event_audio_network_adaptation.cc
     logging/rtc_event_log/events/rtc_event_audio_playout.cc
@@ -1834,6 +2030,8 @@ PRIVATE
     logging/rtc_event_log/rtc_stream_config.cc
     video/adaptation/balanced_constraint.cc
     video/adaptation/balanced_constraint.h
+    video/adaptation/bandwidth_quality_scaler_resource.cc
+    video/adaptation/bandwidth_quality_scaler_resource.h
     video/adaptation/bitrate_constraint.cc
     video/adaptation/bitrate_constraint.h
     video/adaptation/encode_usage_resource.cc
@@ -1850,32 +2048,41 @@ PRIVATE
     video/adaptation/video_stream_encoder_resource.h
     video/adaptation/video_stream_encoder_resource_manager.cc
     video/adaptation/video_stream_encoder_resource_manager.h
+    video/config/encoder_stream_factory.cc
+    video/config/encoder_stream_factory.h
+    video/config/simulcast.cc
+    video/config/simulcast.h
+    video/config/video_encoder_config.cc
+    video/config/video_encoder_config.h
+    video/render/incoming_video_stream.cc
+    video/render/incoming_video_stream.h
+    video/render/video_render_frames.cc
+    video/render/video_render_frames.h
     video/buffered_frame_decryptor.cc
     video/buffered_frame_decryptor.h
-    video/call_stats.cc
-    video/call_stats.h
     video/call_stats2.cc
     video/call_stats2.h
     video/encoder_rtcp_feedback.cc
     video/encoder_rtcp_feedback.h
+    video/decode_synchronizer.cc
+    video/decode_synchronizer.h
+    video/frame_cadence_adapter.cc
+    video/frame_cadence_adapter.h
+    video/frame_decode_scheduler.h
+    video/frame_decode_timing.cc
+    video/frame_decode_timing.h
     video/frame_dumping_decoder.cc
     video/frame_dumping_decoder.h
     video/quality_limitation_reason_tracker.cc
     video/quality_limitation_reason_tracker.h
     video/quality_threshold.cc
     video/quality_threshold.h
-    video/receive_statistics_proxy.cc
-    video/receive_statistics_proxy.h
     video/receive_statistics_proxy2.cc
     video/receive_statistics_proxy2.h
     video/report_block_stats.cc
     video/report_block_stats.h
-    video/rtp_streams_synchronizer.cc
-    video/rtp_streams_synchronizer.h
     video/rtp_streams_synchronizer2.cc
     video/rtp_streams_synchronizer2.h
-    video/rtp_video_stream_receiver.cc
-    video/rtp_video_stream_receiver.h
     video/rtp_video_stream_receiver2.cc
     video/rtp_video_stream_receiver2.h
     video/rtp_video_stream_receiver_frame_transformer_delegate.cc
@@ -1888,26 +2095,30 @@ PRIVATE
     video/stats_counter.h
     video/stream_synchronization.cc
     video/stream_synchronization.h
+    video/task_queue_frame_decode_scheduler.cc
+    video/task_queue_frame_decode_scheduler.h
     video/transport_adapter.cc
     video/transport_adapter.h
-    video/video_quality_observer.cc
-    video/video_quality_observer.h
+    video/unique_timestamp_counter.cc
+    video/unique_timestamp_counter.h
     video/video_quality_observer2.cc
     video/video_quality_observer2.h
-    video/video_receive_stream.cc
-    video/video_receive_stream.h
+    video/video_receive_stream_timeout_tracker.cc
+    video/video_receive_stream_timeout_tracker.h
     video/video_receive_stream2.cc
     video/video_receive_stream2.h
     video/video_send_stream.cc
     video/video_send_stream.h
     video/video_send_stream_impl.cc
     video/video_send_stream_impl.h
-    video/video_stream_decoder.cc
-    video/video_stream_decoder.h
+    video/video_stream_buffer_controller.cc
+    video/video_stream_buffer_controller.h
     video/video_stream_decoder_impl.cc
     video/video_stream_decoder_impl.h
     video/video_stream_decoder2.cc
     video/video_stream_decoder2.h
+    video/video_stream_encoder_interface.h
+    video/video_stream_encoder_observer.h
     video/alignment_adjuster.cc
     video/alignment_adjuster.h
     video/encoder_bitrate_adjuster.cc
@@ -1929,7 +2140,6 @@ PRIVATE
     audio/channel_receive_frame_transformer_delegate.cc
     audio/channel_send.cc
     audio/channel_send_frame_transformer_delegate.cc
-    audio/null_audio_poller.cc
     audio/remix_resample.cc
     audio/utility/audio_frame_operations.cc
     audio/utility/channel_mixer.cc
@@ -1940,6 +2150,8 @@ PRIVATE
     modules/remote_bitrate_estimator/inter_arrival.cc
     modules/remote_bitrate_estimator/overuse_detector.cc
     modules/remote_bitrate_estimator/overuse_estimator.cc
+    modules/remote_bitrate_estimator/packet_arrival_map.cc
+    modules/remote_bitrate_estimator/packet_arrival_map.h
     modules/remote_bitrate_estimator/remote_bitrate_estimator_abs_send_time.cc
     modules/remote_bitrate_estimator/remote_bitrate_estimator_single_stream.cc
     modules/remote_bitrate_estimator/test/bwe_test_logging.cc
@@ -1947,16 +2159,17 @@ PRIVATE
     sdk/media_constraints.cc
 
     # screen drawer
-    # there is x11 required also
-#    modules/desktop_capture/screen_drawer.cc
-#    modules/desktop_capture/screen_drawer.h
-#    modules/desktop_capture/screen_drawer_mac.cc
-#    modules/desktop_capture/screen_drawer_linux.cc
-#    modules/desktop_capture/screen_drawer_lock_posix.cc
-#    modules/desktop_capture/screen_drawer_lock_posix.h
-#    modules/desktop_capture/screen_drawer_win.cc
+    modules/desktop_capture/screen_drawer.cc
+    modules/desktop_capture/screen_drawer.h
+    modules/desktop_capture/screen_drawer_mac.cc
+    modules/desktop_capture/screen_drawer_linux.cc
+    modules/desktop_capture/screen_drawer_lock_posix.cc
+    modules/desktop_capture/screen_drawer_lock_posix.h
+    modules/desktop_capture/screen_drawer_win.cc
 
     # primitives
+    modules/desktop_capture/delegated_source_list_controller.h
+    modules/desktop_capture/desktop_capture_metadata.h
     modules/desktop_capture/desktop_capture_types.h
     modules/desktop_capture/desktop_frame.cc
     modules/desktop_capture/desktop_frame.h
@@ -1979,6 +2192,8 @@ PRIVATE
     modules/desktop_capture/cropping_window_capturer_win.cc
     modules/desktop_capture/desktop_and_cursor_composer.cc
     modules/desktop_capture/desktop_and_cursor_composer.h
+    modules/desktop_capture/desktop_capture_metrics_helper.cc
+    modules/desktop_capture/desktop_capture_metrics_helper.h
     modules/desktop_capture/desktop_capture_options.cc
     modules/desktop_capture/desktop_capture_options.h
     modules/desktop_capture/desktop_capturer.cc
@@ -2035,29 +2250,50 @@ PRIVATE
     modules/desktop_capture/window_capturer_null.cc
 
     # linux specific
-    # idk wth with use_x11 and rtc_use_x11_extensions...
-#    modules/desktop_capture/linux/base_capturer_pipewire.cc
-#    modules/desktop_capture/linux/base_capturer_pipewire.h
-#    modules/desktop_capture/linux/mouse_cursor_monitor_x11.cc
-#    modules/desktop_capture/linux/mouse_cursor_monitor_x11.h
-#    modules/desktop_capture/linux/screen_capturer_x11.cc
-#    modules/desktop_capture/linux/screen_capturer_x11.h
-#    modules/desktop_capture/linux/shared_x_display.cc
-#    modules/desktop_capture/linux/shared_x_display.h
-#    modules/desktop_capture/linux/window_capturer_x11.cc
-#    modules/desktop_capture/linux/window_capturer_x11.h
-#    modules/desktop_capture/linux/window_finder_x11.cc
-#    modules/desktop_capture/linux/window_finder_x11.h
-#    modules/desktop_capture/linux/window_list_utils.cc
-#    modules/desktop_capture/linux/window_list_utils.h
-#    modules/desktop_capture/linux/x_atom_cache.cc
-#    modules/desktop_capture/linux/x_atom_cache.h
-#    modules/desktop_capture/linux/x_error_trap.cc
-#    modules/desktop_capture/linux/x_error_trap.h
-#    modules/desktop_capture/linux/x_server_pixel_buffer.cc
-#    modules/desktop_capture/linux/x_server_pixel_buffer.h
-#    modules/desktop_capture/linux/x_window_property.cc
-#    modules/desktop_capture/linux/x_window_property.h
+    modules/desktop_capture/linux/wayland/base_capturer_pipewire.cc
+    modules/desktop_capture/linux/wayland/base_capturer_pipewire.h
+    modules/desktop_capture/linux/wayland/drm.sigs
+    modules/desktop_capture/linux/wayland/egl_dmabuf.cc
+    modules/desktop_capture/linux/wayland/egl_dmabuf.h
+    modules/desktop_capture/linux/wayland/mouse_cursor_monitor_pipewire.cc
+    modules/desktop_capture/linux/wayland/mouse_cursor_monitor_pipewire.h
+    modules/desktop_capture/linux/wayland/pipewire_stub_header.fragment
+    modules/desktop_capture/linux/wayland/portal_request_response.h
+    modules/desktop_capture/linux/wayland/restore_token_manager.cc
+    modules/desktop_capture/linux/wayland/restore_token_manager.h
+    modules/desktop_capture/linux/wayland/scoped_glib.cc
+    modules/desktop_capture/linux/wayland/scoped_glib.h
+    modules/desktop_capture/linux/wayland/screen_capture_portal_interface.cc
+    modules/desktop_capture/linux/wayland/screen_capture_portal_interface.h
+    modules/desktop_capture/linux/wayland/screencast_portal.cc
+    modules/desktop_capture/linux/wayland/screencast_portal.h
+    modules/desktop_capture/linux/wayland/screencast_stream_utils.cc
+    modules/desktop_capture/linux/wayland/screencast_stream_utils.h
+    modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
+    modules/desktop_capture/linux/wayland/shared_screencast_stream.h
+    modules/desktop_capture/linux/wayland/xdg_desktop_portal_utils.cc
+    modules/desktop_capture/linux/wayland/xdg_desktop_portal_utils.h
+    modules/desktop_capture/linux/wayland/xdg_session_details.h
+    modules/desktop_capture/linux/x11/mouse_cursor_monitor_x11.cc
+    modules/desktop_capture/linux/x11/mouse_cursor_monitor_x11.h
+    modules/desktop_capture/linux/x11/screen_capturer_x11.cc
+    modules/desktop_capture/linux/x11/screen_capturer_x11.h
+    modules/desktop_capture/linux/x11/shared_x_display.cc
+    modules/desktop_capture/linux/x11/shared_x_display.h
+    modules/desktop_capture/linux/x11/window_capturer_x11.cc
+    modules/desktop_capture/linux/x11/window_capturer_x11.h
+    modules/desktop_capture/linux/x11/window_finder_x11.cc
+    modules/desktop_capture/linux/x11/window_finder_x11.h
+    modules/desktop_capture/linux/x11/window_list_utils.cc
+    modules/desktop_capture/linux/x11/window_list_utils.h
+    modules/desktop_capture/linux/x11/x_atom_cache.cc
+    modules/desktop_capture/linux/x11/x_atom_cache.h
+    modules/desktop_capture/linux/x11/x_error_trap.cc
+    modules/desktop_capture/linux/x11/x_error_trap.h
+    modules/desktop_capture/linux/x11/x_server_pixel_buffer.cc
+    modules/desktop_capture/linux/x11/x_server_pixel_buffer.h
+    modules/desktop_capture/linux/x11/x_window_property.cc
+    modules/desktop_capture/linux/x11/x_window_property.h
 
     # mac specific
     modules/desktop_capture/mac/desktop_configuration.mm
@@ -2163,10 +2399,70 @@ if (NOT TG_OWT_USE_PROTOBUF)
     )
 endif()
 
+if (NOT TG_OWT_USE_X11)
+    remove_target_sources(tg_owt ${webrtc_loc}
+        # src/modules/desktop_capture/BUILD.gn (rtc_use_x11_extensions)
+        modules/desktop_capture/linux/x11/mouse_cursor_monitor_x11.cc
+        modules/desktop_capture/linux/x11/mouse_cursor_monitor_x11.h
+        modules/desktop_capture/linux/x11/screen_capturer_x11.cc
+        modules/desktop_capture/linux/x11/screen_capturer_x11.h
+        modules/desktop_capture/linux/x11/shared_x_display.cc
+        modules/desktop_capture/linux/x11/shared_x_display.h
+        modules/desktop_capture/linux/x11/window_capturer_x11.cc
+        modules/desktop_capture/linux/x11/window_capturer_x11.h
+        modules/desktop_capture/linux/x11/window_finder_x11.cc
+        modules/desktop_capture/linux/x11/window_finder_x11.h
+        modules/desktop_capture/linux/x11/window_list_utils.cc
+        modules/desktop_capture/linux/x11/window_list_utils.h
+        modules/desktop_capture/linux/x11/x_atom_cache.cc
+        modules/desktop_capture/linux/x11/x_atom_cache.h
+        modules/desktop_capture/linux/x11/x_error_trap.cc
+        modules/desktop_capture/linux/x11/x_error_trap.h
+        modules/desktop_capture/linux/x11/x_server_pixel_buffer.cc
+        modules/desktop_capture/linux/x11/x_server_pixel_buffer.h
+        modules/desktop_capture/linux/x11/x_window_property.cc
+        modules/desktop_capture/linux/x11/x_window_property.h
+
+        # screen_drawer_linux.cc depends on x11, rest are revdeps
+        modules/desktop_capture/screen_drawer.cc
+        modules/desktop_capture/screen_drawer.h
+        modules/desktop_capture/screen_drawer_linux.cc
+        modules/desktop_capture/screen_drawer_lock_posix.cc
+        modules/desktop_capture/screen_drawer_lock_posix.h
+    )
+endif()
+
+if (NOT TG_OWT_USE_PIPEWIRE)
+    remove_target_sources(tg_owt ${webrtc_loc}
+        modules/desktop_capture/linux/wayland/base_capturer_pipewire.cc
+        modules/desktop_capture/linux/wayland/base_capturer_pipewire.h
+        modules/desktop_capture/linux/wayland/drm.sigs
+        modules/desktop_capture/linux/wayland/egl_dmabuf.cc
+        modules/desktop_capture/linux/wayland/egl_dmabuf.h
+        modules/desktop_capture/linux/wayland/mouse_cursor_monitor_pipewire.cc
+        modules/desktop_capture/linux/wayland/mouse_cursor_monitor_pipewire.h
+        modules/desktop_capture/linux/wayland/pipewire_stub_header.fragment
+        modules/desktop_capture/linux/wayland/portal_request_response.h
+        modules/desktop_capture/linux/wayland/restore_token_manager.cc
+        modules/desktop_capture/linux/wayland/restore_token_manager.h
+        modules/desktop_capture/linux/wayland/scoped_glib.cc
+        modules/desktop_capture/linux/wayland/scoped_glib.h
+        modules/desktop_capture/linux/wayland/screen_capture_portal_interface.cc
+        modules/desktop_capture/linux/wayland/screen_capture_portal_interface.h
+        modules/desktop_capture/linux/wayland/screencast_portal.cc
+        modules/desktop_capture/linux/wayland/screencast_portal.h
+        modules/desktop_capture/linux/wayland/screencast_stream_utils.cc
+        modules/desktop_capture/linux/wayland/screencast_stream_utils.h
+        modules/desktop_capture/linux/wayland/shared_screencast_stream.cc
+        modules/desktop_capture/linux/wayland/shared_screencast_stream.h
+        modules/desktop_capture/linux/wayland/xdg_desktop_portal_utils.cc
+        modules/desktop_capture/linux/wayland/xdg_desktop_portal_utils.h
+        modules/desktop_capture/linux/wayland/xdg_session_details.h
+    )
+endif()
+
 if (NOT TG_OWT_BUILD_AUDIO_BACKENDS)
     remove_target_sources(tg_owt ${webrtc_loc}
-        rtc_base/win/windows_version.cc
-        rtc_base/win/windows_version.h
         modules/audio_device/include/audio_device_factory.cc
         modules/audio_device/include/audio_device_factory.h
         modules/audio_device/linux/alsasymboltable_linux.cc
@@ -2291,7 +2587,6 @@ if (APPLE)
     remove_target_sources(tg_owt ${webrtc_loc}
         rtc_base/socket.cc
         rtc_base/socket.h
-        media/sctp/noop.cc
         modules/audio_coding/codecs/isac/empty.cc
         modules/remote_bitrate_estimator/test/bwe_test_logging.cc
     )
@@ -2311,9 +2606,9 @@ endif()
 
 if (WIN32 OR APPLE)
     remove_target_sources(tg_owt ${webrtc_loc}
-        rtc_base/task_queue_libevent.cc
-        rtc_base/task_queue_libevent.h
-        api/task_queue/default_task_queue_factory_libevent.cc
+        rtc_base/task_queue_stdlib.cc
+        rtc_base/task_queue_stdlib.h
+        api/task_queue/default_task_queue_factory_stdlib.cc
     )
 endif()
 
@@ -2321,29 +2616,12 @@ if (WIN32)
     remove_target_sources(tg_owt ${webrtc_loc}
         rtc_base/ifaddrs_converter.cc
     )
-else()
 endif()
 
 set(platform_export)
-if (NOT WIN32 AND NOT APPLE AND NOT LIBEVENT_FOUND)
-    set(platform_export
-        libevent
-    )
-elseif (APPLE)
+if (APPLE)
     set(platform_export
         libsdkmacos
-    )
-endif()
-
-set(vpx_export)
-if (is_x86 OR is_x64)
-    set(vpx_export
-        libvpx_mmx
-        libvpx_sse2
-        libvpx_ssse3
-        libvpx_sse4
-        libvpx_avx
-        libvpx_avx2
     )
 endif()
 
@@ -2375,11 +2653,8 @@ endif()
 if (NOT LIBOPENH264_FOUND)
     list(APPEND export_targets libopenh264)
 endif()
-if (NOT LIBUSRSCTP_FOUND)
-    list(APPEND export_targets libusrsctp)
-endif()
-if (NOT LIBVPX_FOUND)
-    list(APPEND export_targets libvpx ${vpx_export})
+if (NOT Crc32c_FOUND)
+    list(APPEND export_targets libcrc32c)
 endif()
 
 export(

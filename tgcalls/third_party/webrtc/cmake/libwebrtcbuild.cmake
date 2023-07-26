@@ -20,12 +20,21 @@ INTERFACE
     WEBRTC_USE_H264
     WEBRTC_LIBRARY_IMPL
     WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS=1
+    WEBRTC_HAVE_DCSCTP
+    WEBRTC_HAVE_SCTP
     NO_MAIN_THREAD_WRAPPING
     HAVE_WEBRTC_VIDEO
     RTC_ENABLE_VP9
     RTC_DISABLE_TRACE_EVENTS
     BWE_TEST_LOGGING_COMPILE_TIME_ENABLE=0
 )
+
+if (TG_OWT_USE_X11)
+    target_compile_definitions(libwebrtcbuild
+    INTERFACE
+        WEBRTC_USE_X11
+    )
+endif()
 
 if (TG_OWT_USE_PIPEWIRE)
     target_compile_definitions(libwebrtcbuild
@@ -52,19 +61,35 @@ if (WIN32)
     INTERFACE
         WEBRTC_WIN
     )
-elseif (APPLE)
-    target_compile_definitions(libwebrtcbuild
-    INTERFACE
-        WEBRTC_POSIX
-        WEBRTC_MAC
-    )
 else()
     target_compile_definitions(libwebrtcbuild
     INTERFACE
         WEBRTC_POSIX
-        WEBRTC_LINUX
-#        WEBRTC_USE_X11
     )
+
+    if (APPLE)
+        target_compile_definitions(libwebrtcbuild
+        INTERFACE
+            WEBRTC_MAC
+        )
+    endif()
+
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_compile_definitions(libwebrtcbuild
+        INTERFACE
+            WEBRTC_LINUX
+        )
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
+        target_compile_definitions(libwebrtcbuild
+        INTERFACE
+            WEBRTC_FREEBSD
+        )
+    elseif (CMAKE_SYSTEM_NAME STREQUAL "OpenBSD")
+        target_compile_definitions(libwebrtcbuild
+        INTERFACE
+            WEBRTC_OPENBSD
+        )
+    endif()
 endif()
 
 target_include_directories(libwebrtcbuild

@@ -11,13 +11,8 @@ function(init_target_folder target_name folder_name)
 endfunction()
 
 function(init_target target_name) # init_target(my_target folder_name)
-    if (APPLE)
-        target_compile_features(${target_name} PUBLIC cxx_std_14)
-    else()
-        # C++20 is not supported by bundled abseil-cpp yet:
-        # https://github.com/abseil/abseil-cpp/issues/722
-        target_compile_features(${target_name} PUBLIC cxx_std_17)
-    endif()
+    target_compile_features(${target_name} PUBLIC cxx_std_20)
+
     if (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         set_target_properties(${target_name} PROPERTIES
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -42,8 +37,10 @@ function(init_target target_name) # init_target(my_target folder_name)
         target_compile_definitions(${target_name}
         PRIVATE
             WIN32_LEAN_AND_MEAN
-            HAVE_WINSOCK2_H
             NOMINMAX
+            HAVE_WINSOCK2_H
+            HAVE_WINDOWS_H
+            HAVE_X86
             HAVE_SSE2
         )
 
@@ -54,6 +51,10 @@ function(init_target target_name) # init_target(my_target folder_name)
             /wd4244 # 'initializing' conversion from .. to .., possible loss of data.
             /wd4838 # conversion from .. to .. requires a narrowing conversion.
             /wd4305 # 'return': truncation from 'int' to 'bool'.
+
+            # C++20: enum-s used as constants in WebRTC code.
+            /wd5055 # operator 'X': deprecated between enumerations and floating-point types
+
             /MP     # Enable multi process build.
             /EHsc   # Catch C++ exceptions only, extern C functions never throw a C++ exception.
             /Zc:wchar_t- # don't tread wchar_t as builtin type
@@ -64,6 +65,13 @@ function(init_target target_name) # init_target(my_target folder_name)
             target_compile_options(${target_name}
             PRIVATE
                 -Wno-deprecated-declarations
+
+                # C++20: volatile arithmetics in RaceChecker.
+                -Wno-deprecated-volatile
+
+                # C++20: enum-s used as constants in WebRTC code.
+                -Wno-deprecated-anon-enum-enum-conversion
+
                 -fobjc-arc
                 -fvisibility=hidden
                 -fvisibility-inlines-hidden
@@ -76,12 +84,6 @@ function(init_target target_name) # init_target(my_target folder_name)
                 -Wno-narrowing
                 -Wno-return-type
             )
-            if (NOT TG_OWT_SPECIAL_TARGET STREQUAL "" AND CMAKE_SIZEOF_VOID_P EQUAL 4)
-                target_compile_options(${target_name}
-                PRIVATE
-                    -g0
-                )
-            endif()
         endif()
 
         if (is_x86)

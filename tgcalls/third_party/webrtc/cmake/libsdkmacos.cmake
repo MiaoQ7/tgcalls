@@ -11,6 +11,9 @@ PRIVATE
 
 nice_target_sources(libsdkmacos ${libsdkmacos_loc}
 PRIVATE
+    api/peerconnection/RTCIceCandidateErrorEvent+Private.h
+    api/peerconnection/RTCIceCandidateErrorEvent.h
+    api/peerconnection/RTCIceCandidateErrorEvent.mm
     api/video_frame_buffer/RTCNativeI420Buffer+Private.h
     api/video_frame_buffer/RTCNativeI420Buffer.h
     api/video_frame_buffer/RTCNativeI420Buffer.mm
@@ -18,14 +21,10 @@ PRIVATE
     api/video_frame_buffer/RTCNativeMutableI420Buffer.mm
     api/video_codec/RTCVideoCodecConstants.h
     api/video_codec/RTCVideoCodecConstants.mm
-    api/video_codec/RTCVideoDecoderAV1.h
-    api/video_codec/RTCVideoDecoderAV1.mm
     api/video_codec/RTCVideoDecoderVP8.h
     api/video_codec/RTCVideoDecoderVP8.mm
     api/video_codec/RTCVideoDecoderVP9.h
     api/video_codec/RTCVideoDecoderVP9.mm
-    api/video_codec/RTCVideoEncoderAV1.h
-    api/video_codec/RTCVideoEncoderAV1.mm
     api/video_codec/RTCVideoEncoderVP8.h
     api/video_codec/RTCVideoEncoderVP8.mm
     api/video_codec/RTCVideoEncoderVP9.h
@@ -34,15 +33,18 @@ PRIVATE
     api/video_codec/RTCWrappedNativeVideoDecoder.mm
     api/video_codec/RTCWrappedNativeVideoEncoder.h
     api/video_codec/RTCWrappedNativeVideoEncoder.mm
+    base/RTCSSLCertificateVerifier.h
+    components/audio/RTCAudioDevice.h
     components/video_frame_buffer/RTCCVPixelBuffer.h
     components/video_frame_buffer/RTCCVPixelBuffer.mm
     components/video_codec/RTCCodecSpecificInfoH264+Private.h
     components/video_codec/RTCCodecSpecificInfoH264.h
     components/video_codec/RTCCodecSpecificInfoH264.mm
-    components/video_codec/RTCH264ProfileLevelId.h
-    components/video_codec/RTCH264ProfileLevelId.mm
+    components/video_codec/RTCCodecSpecificInfoH265+Private.h
     components/video_codec/RTCCodecSpecificInfoH265.h
     components/video_codec/RTCCodecSpecificInfoH265.mm
+    components/video_codec/RTCH264ProfileLevelId.h
+    components/video_codec/RTCH264ProfileLevelId.mm
     components/video_codec/RTCH265ProfileLevelId.h
     components/video_codec/RTCH265ProfileLevelId.mm
     components/video_codec/RTCDefaultVideoDecoderFactory.h
@@ -57,14 +59,6 @@ PRIVATE
     components/video_codec/RTCVideoEncoderFactoryH264.m
     components/video_codec/RTCVideoEncoderH264.h
     components/video_codec/RTCVideoEncoderH264.mm
-    components/video_codec/RTCVideoDecoderFactoryH265.h
-    components/video_codec/RTCVideoDecoderFactoryH265.m
-    components/video_codec/RTCVideoDecoderH265.h
-    components/video_codec/RTCVideoDecoderH265.mm
-    components/video_codec/RTCVideoEncoderFactoryH265.h
-    components/video_codec/RTCVideoEncoderFactoryH265.m
-    components/video_codec/RTCVideoEncoderH265.h
-    components/video_codec/RTCVideoEncoderH265.mm
     components/video_codec/helpers.cc
     components/video_codec/helpers.h
     components/video_codec/nalu_rewriter.cc
@@ -118,6 +112,10 @@ PRIVATE
     helpers/scoped_cftyperef.h
     native/api/network_monitor_factory.h
     native/api/network_monitor_factory.mm
+    native/api/objc_audio_device_module.h
+    native/api/objc_audio_device_module.mm
+    native/api/ssl_certificate_verifier.h
+    native/api/ssl_certificate_verifier.mm
     native/api/video_capturer.h
     native/api/video_capturer.mm
     native/api/video_decoder_factory.h
@@ -130,6 +128,10 @@ PRIVATE
     native/api/video_frame_buffer.mm
     native/api/video_renderer.h
     native/api/video_renderer.mm
+    native/src/objc_audio_device.h
+    native/src/objc_audio_device.mm
+    native/src/objc_audio_device_delegate.h
+    native/src/objc_audio_device_delegate.mm
     native/src/objc_frame_buffer.h
     native/src/objc_frame_buffer.mm
     native/src/objc_video_decoder_factory.h
