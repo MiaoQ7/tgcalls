@@ -174,12 +174,23 @@ RUN make DESTDIR="$LibrariesPath/ffmpeg-cache" install
 
 WORKDIR ..
 
+FROM builder AS vpx
+RUN git clone -b v1.13.0 --depth=1 https://github.com/webmproject/libvpx.git  vpx
+
+WORKDIR vpx
+RUN ./libvpx/configure
+RUN make -j$(nproc)
+RUN make DESTDIR="$LibrariesPath/vpx-cache" install
+
+WORKDIR ..
+
 FROM builder AS webrtc
 
 COPY --from=mozjpeg ${LibrariesPath}/mozjpeg-cache /
 COPY --from=opus ${LibrariesPath}/opus-cache /
 COPY --from=ffmpeg ${LibrariesPath}/ffmpeg-cache /
 COPY --from=openssl ${LibrariesPath}/openssl-cache /
+COPY --from=vpx ${LibrariesPath}/vpx-cache /
 
 COPY tgcalls/third_party/webrtc ${LibrariesPath}/webrtc
 
@@ -194,7 +205,8 @@ RUN cmake -B out/Release . \
     -DTG_OWT_LIBJPEG_INCLUDE_PATH=/usr/local/include \
     -DTG_OWT_OPENSSL_INCLUDE_PATH=$OPENSSL_PREFIX/include \
     -DTG_OWT_OPUS_INCLUDE_PATH=/usr/local/include/opus \
-    -DTG_OWT_FFMPEG_INCLUDE_PATH=/usr/local/include
+    -DTG_OWT_FFMPEG_INCLUDE_PATH=/usr/local/include \
+    -DTG_OWT_LIBVPX_INCLUDE_PATH=/usr/local/include 
 RUN cmake --build out/Release -- -j$(nproc)
 
 # RUN cmake -B out/Debug . \
