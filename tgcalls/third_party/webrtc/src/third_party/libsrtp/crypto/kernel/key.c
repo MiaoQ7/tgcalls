@@ -42,7 +42,9 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "key.h"
 
@@ -72,14 +74,6 @@ srtp_err_status_t srtp_key_limit_clone(srtp_key_limit_t original,
         return srtp_err_status_bad_param;
     }
     *new_key = original;
-    return srtp_err_status_ok;
-}
-
-srtp_err_status_t srtp_key_limit_check(const srtp_key_limit_t key)
-{
-    if (key->state == srtp_key_state_expired) {
-        return srtp_err_status_key_expired;
-    }
     return srtp_err_status_ok;
 }
 

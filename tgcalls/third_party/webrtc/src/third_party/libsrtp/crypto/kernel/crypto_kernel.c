@@ -42,7 +42,9 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "alloc.h"
 
@@ -58,7 +60,7 @@ srtp_debug_module_t srtp_mod_crypto_kernel = {
 
 /* crypto_kernel is a global variable, the only one of its datatype */
 
-srtp_crypto_kernel_t crypto_kernel = {
+static srtp_crypto_kernel_t crypto_kernel = {
     srtp_crypto_kernel_state_insecure, /* start off in insecure state */
     NULL,                              /* no cipher types yet         */
     NULL,                              /* no auth types yet           */
@@ -67,7 +69,7 @@ srtp_crypto_kernel_t crypto_kernel = {
 
 #define MAX_RNG_TRIALS 25
 
-srtp_err_status_t srtp_crypto_kernel_init()
+srtp_err_status_t srtp_crypto_kernel_init(void)
 {
     srtp_err_status_t status;
 
@@ -99,10 +101,6 @@ srtp_err_status_t srtp_crypto_kernel_init()
     if (status) {
         return status;
     }
-    status = srtp_crypto_kernel_load_debug_module(&srtp_mod_stat);
-    if (status) {
-        return status;
-    }
     status = srtp_crypto_kernel_load_debug_module(&srtp_mod_alloc);
     if (status) {
         return status;
@@ -128,18 +126,18 @@ srtp_err_status_t srtp_crypto_kernel_init()
     if (status) {
         return status;
     }
-#ifdef OPENSSL
+#ifdef GCM
     status = srtp_crypto_kernel_load_cipher_type(&srtp_aes_icm_192,
                                                  SRTP_AES_ICM_192);
     if (status) {
         return status;
     }
-    status = srtp_crypto_kernel_load_cipher_type(&srtp_aes_gcm_128_openssl,
+    status = srtp_crypto_kernel_load_cipher_type(&srtp_aes_gcm_128,
                                                  SRTP_AES_GCM_128);
     if (status) {
         return status;
     }
-    status = srtp_crypto_kernel_load_cipher_type(&srtp_aes_gcm_256_openssl,
+    status = srtp_crypto_kernel_load_cipher_type(&srtp_aes_gcm_256,
                                                  SRTP_AES_GCM_256);
     if (status) {
         return status;
@@ -170,7 +168,7 @@ srtp_err_status_t srtp_crypto_kernel_init()
     return srtp_err_status_ok;
 }
 
-srtp_err_status_t srtp_crypto_kernel_status()
+srtp_err_status_t srtp_crypto_kernel_status(void)
 {
     srtp_err_status_t status;
     srtp_kernel_cipher_type_t *ctype = crypto_kernel.cipher_type_list;
@@ -211,7 +209,7 @@ srtp_err_status_t srtp_crypto_kernel_status()
     return srtp_err_status_ok;
 }
 
-srtp_err_status_t srtp_crypto_kernel_list_debug_modules()
+srtp_err_status_t srtp_crypto_kernel_list_debug_modules(void)
 {
     srtp_kernel_debug_module_t *dm = crypto_kernel.debug_module_list;
 
@@ -230,7 +228,7 @@ srtp_err_status_t srtp_crypto_kernel_list_debug_modules()
     return srtp_err_status_ok;
 }
 
-srtp_err_status_t srtp_crypto_kernel_shutdown()
+srtp_err_status_t srtp_crypto_kernel_shutdown(void)
 {
     /*
      * free dynamic memory used in crypto_kernel at present
@@ -275,7 +273,8 @@ static inline srtp_err_status_t srtp_crypto_kernel_do_load_cipher_type(
     srtp_cipher_type_id_t id,
     int replace)
 {
-    srtp_kernel_cipher_type_t *ctype, *new_ctype;
+    srtp_kernel_cipher_type_t *ctype;
+    srtp_kernel_cipher_type_t *new_ctype = NULL;
     srtp_err_status_t status;
 
     /* defensive coding */
@@ -352,7 +351,8 @@ srtp_err_status_t srtp_crypto_kernel_do_load_auth_type(
     srtp_auth_type_id_t id,
     int replace)
 {
-    srtp_kernel_auth_type_t *atype, *new_atype;
+    srtp_kernel_auth_type_t *atype;
+    srtp_kernel_auth_type_t *new_atype = NULL;
     srtp_err_status_t status;
 
     /* defensive coding */

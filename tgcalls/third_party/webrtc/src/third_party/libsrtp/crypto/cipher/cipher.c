@@ -44,9 +44,12 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "cipher.h"
+#include "cipher_priv.h"
 #include "crypto_types.h"
 #include "err.h"   /* for srtp_debug */
 #include "alloc.h" /* for crypto_alloc(), crypto_free()  */
@@ -163,24 +166,11 @@ int srtp_cipher_get_key_length(const srtp_cipher_t *c)
 }
 
 /*
- * A trivial platform independent random source.  The random
- * data is used for some of the cipher self-tests.
+ * A trivial platform independent random source.
+ * For use in test only.
  */
-static srtp_err_status_t srtp_cipher_rand(void *dest, uint32_t len)
+void srtp_cipher_rand_for_tests(void *dest, uint32_t len)
 {
-#if defined(HAVE_RAND_S)
-    uint8_t *dst = (uint8_t *)dest;
-    while (len) {
-        unsigned int val;
-        errno_t err = rand_s(&val);
-
-        if (err != 0)
-            return srtp_err_status_fail;
-
-        *dst++ = val & 0xff;
-        len--;
-    }
-#else
     /* Generic C-library (rand()) version */
     /* This is a random source of last resort */
     uint8_t *dst = (uint8_t *)dest;
@@ -192,8 +182,17 @@ static srtp_err_status_t srtp_cipher_rand(void *dest, uint32_t len)
         *dst++ = val & 0xff;
         len--;
     }
-#endif
-    return srtp_err_status_ok;
+}
+
+/*
+ * A trivial platform independent 32 bit random number.
+ * For use in test only.
+ */
+uint32_t srtp_cipher_rand_u32_for_tests(void)
+{
+    uint32_t r;
+    srtp_cipher_rand_for_tests(&r, sizeof(r));
+    return r;
 }
 
 #define SELF_TEST_BUF_OCTETS 128
@@ -244,7 +243,7 @@ srtp_err_status_t srtp_cipher_type_test(
         /*
          * test the encrypt function
          */
-        debug_print(srtp_mod_cipher, "testing encryption", NULL);
+        debug_print0(srtp_mod_cipher, "testing encryption");
 
         /* initialize cipher */
         status = srtp_cipher_init(c, test_case->key);
@@ -348,7 +347,7 @@ srtp_err_status_t srtp_cipher_type_test(
         /*
          * test the decrypt function
          */
-        debug_print(srtp_mod_cipher, "testing decryption", NULL);
+        debug_print0(srtp_mod_cipher, "testing decryption");
 
         /* re-initialize cipher for decryption */
         status = srtp_cipher_init(c, test_case->key);
@@ -463,13 +462,9 @@ srtp_err_status_t srtp_cipher_type_test(
         uint8_t iv[MAX_KEY_LEN];
 
         /* choose a length at random (leaving room for IV and padding) */
-        length = rand() % (SELF_TEST_BUF_OCTETS - 64);
+        length = srtp_cipher_rand_u32_for_tests() % (SELF_TEST_BUF_OCTETS - 64);
         debug_print(srtp_mod_cipher, "random plaintext length %d\n", length);
-        status = srtp_cipher_rand(buffer, length);
-        if (status) {
-            srtp_cipher_dealloc(c);
-            return status;
-        }
+        srtp_cipher_rand_for_tests(buffer, length);
 
         debug_print(srtp_mod_cipher, "plaintext:    %s",
                     srtp_octet_string_hex_string(buffer, length));
@@ -484,18 +479,10 @@ srtp_err_status_t srtp_cipher_type_test(
             srtp_cipher_dealloc(c);
             return srtp_err_status_cant_check;
         }
-        status = srtp_cipher_rand(key, test_case->key_length_octets);
-        if (status) {
-            srtp_cipher_dealloc(c);
-            return status;
-        }
+        srtp_cipher_rand_for_tests(key, test_case->key_length_octets);
 
         /* chose a random initialization vector */
-        status = srtp_cipher_rand(iv, MAX_KEY_LEN);
-        if (status) {
-            srtp_cipher_dealloc(c);
-            return status;
-        }
+        srtp_cipher_rand_for_tests(iv, MAX_KEY_LEN);
 
         /* initialize cipher */
         status = srtp_cipher_init(c, key);
@@ -645,8 +632,11 @@ uint64_t srtp_cipher_bits_per_second(srtp_cipher_t *c,
     clock_t timer;
     unsigned char *enc_buf;
     unsigned int len = octets_in_buffer;
+    uint32_t tag_len = SRTP_MAX_TAG_LEN;
+    unsigned char aad[4] = { 0, 0, 0, 0 };
+    uint32_t aad_len = 4;
 
-    enc_buf = (unsigned char *)srtp_crypto_alloc(octets_in_buffer);
+    enc_buf = (unsigned char *)srtp_crypto_alloc(octets_in_buffer + tag_len);
     if (enc_buf == NULL) {
         return 0; /* indicate bad parameters by returning null */
     }
@@ -654,14 +644,34 @@ uint64_t srtp_cipher_bits_per_second(srtp_cipher_t *c,
     v128_set_to_zero(&nonce);
     timer = clock();
     for (i = 0; i < num_trials; i++, nonce.v32[3] = i) {
+        // Set IV
         if (srtp_cipher_set_iv(c, (uint8_t *)&nonce, srtp_direction_encrypt) !=
             srtp_err_status_ok) {
             srtp_crypto_free(enc_buf);
             return 0;
         }
+
+        // Set (empty) AAD if supported by the cipher
+        if (c->type->set_aad) {
+            if (srtp_cipher_set_aad(c, aad, aad_len) != srtp_err_status_ok) {
+                srtp_crypto_free(enc_buf);
+                return 0;
+            }
+        }
+
+        // Encrypt the buffer
         if (srtp_cipher_encrypt(c, enc_buf, &len) != srtp_err_status_ok) {
             srtp_crypto_free(enc_buf);
             return 0;
+        }
+
+        // Get tag if supported by the cipher
+        if (c->type->get_tag) {
+            if (srtp_cipher_get_tag(c, (uint8_t *)(enc_buf + len), &tag_len) !=
+                srtp_err_status_ok) {
+                srtp_crypto_free(enc_buf);
+                return 0;
+            }
         }
     }
     timer = clock() - timer;

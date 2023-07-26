@@ -42,7 +42,9 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include <stdio.h> /* for printf() */
 #include "getopt_s.h"
@@ -110,16 +112,4 @@ int main(int argc, char *argv[])
     printf("srtp_crypto_kernel successfully shut down\n");
 
     return 0;
-}
-
-/*
- * crypto_kernel_cipher_test() is a test of the cipher interface
- * of the crypto_kernel
- */
-
-srtp_err_status_t crypto_kernel_cipher_test(void)
-{
-    /* not implemented yet! */
-
-    return srtp_err_status_ok;
 }

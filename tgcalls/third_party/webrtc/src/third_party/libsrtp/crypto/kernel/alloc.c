@@ -42,7 +42,9 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "alloc.h"
 #include "crypto_kernel.h"
@@ -78,7 +80,7 @@ void *srtp_crypto_alloc(size_t size)
     if (ptr) {
         debug_print(srtp_mod_alloc, "(location: %p) allocated", ptr);
     } else {
-        debug_print(srtp_mod_alloc, "allocation failed (asked for %d bytes)\n",
+        debug_print(srtp_mod_alloc, "allocation failed (asked for %zu bytes)\n",
                     size);
     }
 

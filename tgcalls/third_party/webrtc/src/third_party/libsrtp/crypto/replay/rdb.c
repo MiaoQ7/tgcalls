@@ -43,9 +43,13 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "rdb.h"
+
+#define rdb_bits_in_bitmask (8 * sizeof(v128_t))
 
 /*
  * this implementation of a replay database works as follows:

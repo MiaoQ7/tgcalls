@@ -43,7 +43,9 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "auth.h"
 #include "err.h"       /* for srtp_debug */
@@ -116,6 +118,12 @@ srtp_err_status_t srtp_auth_type_test(const srtp_auth_type_t *at,
 
         /* initialize auth */
         status = srtp_auth_init(a, test_case->key);
+        if (status) {
+            srtp_auth_dealloc(a);
+            return status;
+        }
+
+        status = srtp_auth_start(a);
         if (status) {
             srtp_auth_dealloc(a);
             return status;

@@ -44,7 +44,9 @@
  *
  */
 
-#include "config.h"
+#ifdef HAVE_CONFIG_H
+#include <config.h>
+#endif
 
 #include "datatypes.h"
 #include "null_cipher.h"
@@ -57,6 +59,7 @@ static srtp_err_status_t srtp_null_cipher_alloc(srtp_cipher_t **c,
                                                 int tlen)
 {
     extern const srtp_cipher_type_t srtp_null_cipher;
+    (void)tlen;
 
     debug_print(srtp_mod_cipher, "allocating cipher with key length %d",
                 key_len);
@@ -94,8 +97,9 @@ static srtp_err_status_t srtp_null_cipher_dealloc(srtp_cipher_t *c)
 static srtp_err_status_t srtp_null_cipher_init(void *cv, const uint8_t *key)
 {
     /* srtp_null_cipher_ctx_t *c = (srtp_null_cipher_ctx_t *)cv; */
-
-    debug_print(srtp_mod_cipher, "initializing null cipher", NULL);
+    (void)cv;
+    (void)key;
+    debug_print0(srtp_mod_cipher, "initializing null cipher");
 
     return srtp_err_status_ok;
 }
@@ -105,6 +109,9 @@ static srtp_err_status_t srtp_null_cipher_set_iv(void *cv,
                                                  srtp_cipher_direction_t dir)
 {
     /* srtp_null_cipher_ctx_t *c = (srtp_null_cipher_ctx_t *)cv; */
+    (void)cv;
+    (void)iv;
+    (void)dir;
     return srtp_err_status_ok;
 }
 
@@ -113,6 +120,9 @@ static srtp_err_status_t srtp_null_cipher_encrypt(void *cv,
                                                   unsigned int *bytes_to_encr)
 {
     /* srtp_null_cipher_ctx_t *c = (srtp_null_cipher_ctx_t *)cv; */
+    (void)cv;
+    (void)buf;
+    (void)bytes_to_encr;
     return srtp_err_status_ok;
 }
 
