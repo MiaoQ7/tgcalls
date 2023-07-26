@@ -8,8 +8,6 @@
 #include "Message.h"
 #include "platform/PlatformInterface.h"
 #include "StaticThreads.h"
-#include "video/VideoDecoderFactory.h"
-#include "video/VideoEncoderFactory.h"
 
 #include "api/audio_codecs/audio_decoder_factory_template.h"
 #include "api/audio_codecs/audio_encoder_factory_template.h"
@@ -20,11 +18,13 @@
 #include "system_wrappers/include/field_trial.h"
 #include "api/video/builtin_video_bitrate_allocator_factory.h"
 #include "call/call.h"
-#include "modules/rtp_rtcp/source/rtp_utility.h"
+#include "modules/rtp_rtcp/source/rtp_util.h"
 #include "api/call/audio_sink.h"
 #include "modules/audio_processing/audio_buffer.h"
 #include "modules/audio_device/include/audio_device_factory.h"
-
+#ifdef WEBRTC_IOS
+#include "platform/darwin/iOS/tgcalls_audio_device_module_ios.h"
+#endif
 namespace tgcalls {
 namespace {
 
@@ -165,30 +165,30 @@ public:
     }
 
     virtual void OnFrame(const webrtc::VideoFrame& frame) override {
-        if (_impl) {
+        if (const auto strong = _impl.lock()) {
             if (_rewriteRotation) {
                 webrtc::VideoFrame updatedFrame = frame;
                 //updatedFrame.set_rotation(webrtc::VideoRotation::kVideoRotation_90);
-                _impl->OnFrame(updatedFrame);
+                strong->OnFrame(updatedFrame);
             } else {
-                _impl->OnFrame(frame);
+                strong->OnFrame(frame);
             }
         }
     }
 
     virtual void OnDiscardedFrame() override {
-        if (_impl) {
-            _impl->OnDiscardedFrame();
+        if (const auto strong = _impl.lock()) {
+            strong->OnDiscardedFrame();
         }
     }
 
-    void setSink(std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> impl) {
+    void setSink(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> impl) {
         _impl = impl;
     }
 
 private:
     bool _rewriteRotation = false;
-    std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> _impl;
+    std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> _impl;
 
 };
 
@@ -303,8 +303,6 @@ _enableHighBitrateVideo(enableHighBitrateVideo) {
 
 	mediaDeps.video_encoder_factory = PlatformInterface::SharedInstance()->makeVideoEncoderFactory();
 	mediaDeps.video_decoder_factory = PlatformInterface::SharedInstance()->makeVideoDecoderFactory();
-    // mediaDeps.video_encoder_factory = std::make_unique<VideoEncoderFactory>();
-    // mediaDeps.video_decoder_factory = std::make_unique<VideoDecoderFactory>();
 
 	_myVideoFormats = ComposeSupportedFormats(
 		mediaDeps.video_encoder_factory->GetSupportedFormats(),
@@ -406,9 +404,13 @@ _enableHighBitrateVideo(enableHighBitrateVideo) {
 
 rtc::scoped_refptr<webrtc::AudioDeviceModule> MediaManager::createAudioDeviceModule() {
 	const auto create = [&](webrtc::AudioDeviceModule::AudioLayer layer) {
+#ifdef WEBRTC_IOS
+        return rtc::make_ref_counted<webrtc::tgcalls_ios_adm::AudioDeviceModuleIOS>(false, false);
+#else
 		return webrtc::AudioDeviceModule::Create(
 			layer,
             _taskQueueFactory.get());
+#endif
 	};
 	const auto check = [&](const rtc::scoped_refptr<webrtc::AudioDeviceModule> &result) {
         return (result && result->Init() == 0) ? result : nullptr;
@@ -450,7 +452,6 @@ void MediaManager::start() {
 MediaManager::~MediaManager() {
 	assert(_thread->IsCurrent());
 
-    printf("MediaManager::~MediaManager()\n");
     RTC_LOG(LS_INFO) << "MediaManager::~MediaManager()";
 
 	_call->SignalChannelNetworkState(webrtc::MediaType::AUDIO, webrtc::kNetworkDown);
@@ -906,13 +907,8 @@ void MediaManager::setOutgoingVideoState(VideoState state) {
 	sendOutgoingMediaStateMessage();
 }
 
-void MediaManager::setIncomingVideoOutput(std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
+void MediaManager::setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
     _incomingVideoSinkProxy->setSink(sink);
-}
-
-static bool IsRtcp(const uint8_t* packet, size_t length) {
-    webrtc::RtpUtility::RtpHeaderParser rtp_parser(packet, length);
-    return rtp_parser.RTCP();
 }
 
 void MediaManager::receiveMessage(DecryptedMessage &&message) {
@@ -920,14 +916,22 @@ void MediaManager::receiveMessage(DecryptedMessage &&message) {
 	if (const auto formats = absl::get_if<VideoFormatsMessage>(data)) {
 		setPeerVideoFormats(std::move(*formats));
 	} else if (const auto audio = absl::get_if<AudioDataMessage>(data)) {
-        if (IsRtcp(audio->data.data(), audio->data.size())) {
+        if (webrtc::IsRtcpPacket(audio->data)) {
             RTC_LOG(LS_VERBOSE) << "Deliver audio RTCP";
         }
-        _call->Receiver()->DeliverPacket(webrtc::MediaType::AUDIO, audio->data, -1);
+        if (webrtc::IsRtcpPacket(audio->data)) {
+            _call->Receiver()->DeliverPacket(webrtc::MediaType::ANY, audio->data, -1);
+        } else {
+            _call->Receiver()->DeliverPacket(webrtc::MediaType::AUDIO, audio->data, -1);
+        }
 	} else if (const auto video = absl::get_if<VideoDataMessage>(data)) {
 		if (_videoChannel) {
 			if (_readyToReceiveVideo) {
-                _call->Receiver()->DeliverPacket(webrtc::MediaType::VIDEO, video->data, -1);
+                if (webrtc::IsRtcpPacket(video->data)) {
+                    _call->Receiver()->DeliverPacket(webrtc::MediaType::ANY, video->data, -1);
+                } else {
+                    _call->Receiver()->DeliverPacket(webrtc::MediaType::VIDEO, video->data, -1);
+                }
 			} else {
 				// maybe we need to queue packets for some time?
 			}

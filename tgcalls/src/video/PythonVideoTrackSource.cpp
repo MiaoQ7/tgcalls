@@ -29,6 +29,7 @@ public:
           webrtc::SleepMs(1000 / fps - delta_time_millis);
         }
       }
+      printf("PythonVideoSource LOOP EXIT\n");
     }).detach();
   }
 

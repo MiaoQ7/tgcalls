@@ -27,11 +27,11 @@ namespace tgcalls {
 class VideoCaptureInterface;
 
 struct FilePath {
-//#ifndef _WIN32
+#ifndef _WIN32
 	std::string data;
-//#else
-//	std::wstring data;
-//#endif
+#else
+	std::wstring data;
+#endif
 };
 
 struct Proxy {
@@ -183,7 +183,7 @@ public:
 	virtual void setEchoCancellationStrength(int strength) = 0;
 
 	virtual bool supportsVideo() = 0;
-	virtual void setIncomingVideoOutput(std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) = 0;
+	virtual void setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) = 0;
 
 	virtual void setAudioInputDevice(std::string id) = 0;
 	virtual void setAudioOutputDevice(std::string id) = 0;

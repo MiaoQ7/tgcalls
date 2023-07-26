@@ -38,8 +38,6 @@ std::unique_ptr<Instance> Meta::Create(
 		Descriptor &&descriptor) {
 	const auto i = MetaMap().find(version);
 
-	printf("Meta::Create Map size: %ld\n", MetaMap().size());
-
 	// Enforce correct protocol version.
 	if (version == "2.7.7") {
 		descriptor.config.protocolVersion = ProtocolVersion::V0;

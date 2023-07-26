@@ -14,7 +14,7 @@ class Threads;
 
 class VideoCaptureInterfaceObject {
 public:
-  VideoCaptureInterfaceObject(std::string deviceId, bool isScreenCapture, std::shared_ptr<PlatformContext> platformContext, Threads &threads, rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> videoSource);
+	VideoCaptureInterfaceObject(std::string deviceId, bool isScreenCapture, std::shared_ptr<PlatformContext> platformContext, Threads &threads);
 	~VideoCaptureInterfaceObject();
 
 	void switchToDevice(std::string deviceId, bool isScreenCapture);
@@ -52,7 +52,7 @@ private:
 
 class VideoCaptureInterfaceImpl : public VideoCaptureInterface {
 public:
-  VideoCaptureInterfaceImpl(std::string deviceId, bool isScreenCapture, std::shared_ptr<PlatformContext> platformContext, std::shared_ptr<Threads> threads, rtc::scoped_refptr<webrtc::VideoTrackSourceInterface> videoSource);
+	VideoCaptureInterfaceImpl(std::string deviceId, bool isScreenCapture, std::shared_ptr<PlatformContext> platformContext, std::shared_ptr<Threads> threads);
 	virtual ~VideoCaptureInterfaceImpl();
 
 	void switchToDevice(std::string deviceId, bool isScreenCapture) override;

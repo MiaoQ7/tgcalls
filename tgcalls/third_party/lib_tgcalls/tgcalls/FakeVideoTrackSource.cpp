@@ -101,7 +101,7 @@ webrtc::VideoFrame FrameSource::next_frame() {
 }
 
 class FakeVideoSource : public rtc::VideoSourceInterface<webrtc::VideoFrame> {
-public:
+ public:
   FakeVideoSource(std::unique_ptr<FrameSource> source) {
     data_ = std::make_shared<Data>();
     std::thread([data = data_, source = std::move(source)] {
@@ -121,13 +121,13 @@ public:
   }
   using VideoFrameT = webrtc::VideoFrame;
   void AddOrUpdateSink(rtc::VideoSinkInterface<VideoFrameT> *sink, const rtc::VideoSinkWants &wants) override {
-    RTC_LOG(WARNING) << "ADD";
+    RTC_LOG(LS_WARNING) << "ADD";
     data_->broadcaster_.AddOrUpdateSink(sink, wants);
   }
   // RemoveSink must guarantee that at the time the method returns,
   // there is no current and no future calls to VideoSinkInterface::OnFrame.
   void RemoveSink(rtc::VideoSinkInterface<VideoFrameT> *sink) {
-    RTC_LOG(WARNING) << "REMOVE";
+    RTC_LOG(LS_WARNING) << "REMOVE";
     data_->broadcaster_.RemoveSink(sink);
   }
 

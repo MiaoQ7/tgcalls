@@ -9,7 +9,6 @@
 
 #include "../Instance.h"
 #include "GroupInstanceImpl.h"
-#include "../platform/PlatformInterface.h"
 
 namespace tgcalls {
 
@@ -24,7 +23,7 @@ public:
 
     void stop();
     
-    void setConnectionMode(GroupConnectionMode connectionMode, bool keepBroadcastIfWasEnabled);
+    void setConnectionMode(GroupConnectionMode connectionMode, bool keepBroadcastIfWasEnabled, bool isUnifiedBroadcast);
 
     void emitJoinPayload(std::function<void(GroupJoinPayload const &)> completion);
     void setJoinResponsePayload(std::string const &payload);
@@ -38,7 +37,8 @@ public:
     void setAudioOutputDevice(std::string id);
     void setAudioInputDevice(std::string id);
     void addExternalAudioSamples(std::vector<uint8_t> &&samples);
-
+    
+    void addOutgoingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink);
     void addIncomingVideoOutput(std::string const &endpointId, std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink);
     
     void setVolume(uint32_t ssrc, double volume);
@@ -46,9 +46,7 @@ public:
 
     void getStats(std::function<void(GroupInstanceStats)> completion);
 
-    void performWithAudioDeviceModule(std::function<void(rtc::scoped_refptr<WrappedAudioDeviceModule>)> callback);
-
-  private:
+private:
     std::shared_ptr<Threads> _threads;
     std::unique_ptr<ThreadLocalObject<GroupInstanceCustomInternal>> _internal;
     std::unique_ptr<LogSinkImpl> _logSink;

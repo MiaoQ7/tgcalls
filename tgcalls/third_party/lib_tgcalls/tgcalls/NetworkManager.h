@@ -91,23 +91,17 @@ private:
 	EncryptedConnection _transport;
 	bool _isOutgoing = false;
 	std::function<void(const NetworkManager::State &)> _stateUpdated;
-	// 收到消息处理函数
 	std::function<void(DecryptedMessage &&)> _transportMessageReceived;
-	// 发送信令信息
 	std::function<void(Message &&)> _sendSignalingMessage;
 
     std::unique_ptr<rtc::NetworkMonitorFactory> _networkMonitorFactory;
 	std::unique_ptr<rtc::BasicPacketSocketFactory> _socketFactory;
 	std::unique_ptr<rtc::BasicNetworkManager> _networkManager;
     std::unique_ptr<webrtc::TurnCustomizer> _turnCustomizer;
-	
-	// 端口分配器
 	std::unique_ptr<cricket::BasicPortAllocator> _portAllocator;
-// 异步解析器工厂
 	std::unique_ptr<webrtc::BasicAsyncResolverFactory> _asyncResolverFactory;
-	// 传输通道
 	std::unique_ptr<cricket::P2PTransportChannel> _transportChannel;
-		// 局部ice参数
+
     PeerIceParameters _localIceParameters;
     absl::optional<PeerIceParameters> _remoteIceParameters;
     

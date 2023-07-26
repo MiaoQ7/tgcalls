@@ -62,22 +62,17 @@ void dumpStatsLog(const FilePath &path, const CallStats &stats) {
 
 } // namespace
 
-bool Manager::ResolvedNetworkStatus::operator==(const ResolvedNetworkStatus &rhs) {
-    // printf("Manager::ResolvedNetworkStatus::operator==1\n");
+bool Manager::ResolvedNetworkStatus::operator==(const ResolvedNetworkStatus &rhs) const {
     if (rhs.isLowCost != isLowCost) {
-        // printf("Manager::ResolvedNetworkStatus::operator==2\n");
         return false;
     }
     if (rhs.isLowDataRequested != isLowDataRequested) {
-        // printf("Manager::ResolvedNetworkStatus::operator==3\n");
         return false;
     }
-    // printf("Manager::ResolvedNetworkStatus::operator==4\n");
     return true;
 }
 
-bool Manager::ResolvedNetworkStatus::operator!=(const ResolvedNetworkStatus &rhs) {
-    // printf("Manager::ResolvedNetworkStatus::operator!=\n");
+bool Manager::ResolvedNetworkStatus::operator!=(const ResolvedNetworkStatus &rhs) const {
     return !(*this == rhs);
 }
 
@@ -128,33 +123,24 @@ _dataSaving(descriptor.config.dataSaving) {
 }
 
 Manager::~Manager() {
-    printf("Manager::~Manager\n");
 	assert(_thread->IsCurrent());
 }
 
 void Manager::sendSignalingAsync(int delayMs, int cause) {
-    // printf("Manager::sendSignalingAsync - 1\n");
 	auto task = [weak = std::weak_ptr<Manager>(shared_from_this()), cause] {
-        // printf("Manager::sendSignalingAsync - 4\n");
 		const auto strong = weak.lock();
-        // printf("Manager::sendSignalingAsync - 5\n");
 		if (!strong) {
 			return;
 		}
-        // printf("Manager::sendSignalingAsync - 6\n");
 		if (const auto prepared = strong->_signaling.prepareForSendingService(cause)) {
-            // printf("Manager::sendSignalingAsync - 7\n");
 			strong->_signalingDataEmitted(prepared->bytes);
 		}
-        // printf("Manager::sendSignalingAsync - 8\n");
 	};
-    // printf("Manager::sendSignalingAsync - 2\n");
 	if (delayMs) {
 		_thread->PostDelayedTask(RTC_FROM_HERE, std::move(task), delayMs);
 	} else {
 		_thread->PostTask(RTC_FROM_HERE, std::move(task));
 	}
-    // printf("Manager::sendSignalingAsync - 3\n");
 }
 
 void Manager::start() {
@@ -345,7 +331,7 @@ void Manager::setMuteOutgoingAudio(bool mute) {
 	});
 }
 
-void Manager::setIncomingVideoOutput(std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
+void Manager::setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
 	_mediaManager->perform(RTC_FROM_HERE, [sink](MediaManager *mediaManager) {
 		mediaManager->setIncomingVideoOutput(sink);
 	});

@@ -43,9 +43,7 @@ InstanceImpl::InstanceImpl(Descriptor &&descriptor)
 }
 
 InstanceImpl::~InstanceImpl() {
-    printf("InstanceImpl::~InstanceImpl()\n");
 	rtc::LogMessage::RemoveLogToStream(_logSink.get());
-    printf("InstanceImpl::~InstanceImpl() END \n");
 }
 
 void InstanceImpl::receiveSignalingData(const std::vector<uint8_t> &data) {
@@ -94,7 +92,7 @@ void InstanceImpl::setMuteMicrophone(bool muteMicrophone) {
 	});
 }
 
-void InstanceImpl::setIncomingVideoOutput(std::shared_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
+void InstanceImpl::setIncomingVideoOutput(std::weak_ptr<rtc::VideoSinkInterface<webrtc::VideoFrame>> sink) {
 	_manager->perform(RTC_FROM_HERE, [sink](Manager *manager) {
 		manager->setIncomingVideoOutput(sink);
 	});

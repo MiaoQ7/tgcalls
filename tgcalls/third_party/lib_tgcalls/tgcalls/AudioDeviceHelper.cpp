@@ -55,7 +55,7 @@ void SetAudioInputDeviceById(webrtc::AudioDeviceModule *adm, const std::string &
 		char name[webrtc::kAdmMaxDeviceNameSize + 1] = { 0 };
 		char guid[webrtc::kAdmMaxGuidSize + 1] = { 0 };
 		adm->RecordingDeviceName(i, name, guid);
-		if ((!SkipDefaultDevice(name) && (id == guid || id == name)) || order == i) {
+		if ((!SkipDefaultDevice(name) && id == guid) || order == i) {
 			const auto result = adm->SetRecordingDevice(i);
 			if (result != 0) {
 				RTC_LOG(LS_ERROR) << "setAudioInputDevice(" << id << ") name '" << std::string(name) << "' failed: " << result << ".";
@@ -102,7 +102,7 @@ void SetAudioOutputDeviceById(webrtc::AudioDeviceModule *adm, const std::string 
 		char name[webrtc::kAdmMaxDeviceNameSize + 1] = { 0 };
 		char guid[webrtc::kAdmMaxGuidSize + 1] = { 0 };
 		adm->PlayoutDeviceName(i, name, guid);
-		if ((!SkipDefaultDevice(name) && (id == guid || id == name)) || order == i) {
+		if ((!SkipDefaultDevice(name) && id == guid) || order == i) {
 			const auto result = adm->SetPlayoutDevice(i);
 			if (result != 0) {
 				RTC_LOG(LS_ERROR) << "setAudioOutputDevice(" << id << ") name '" << std::string(name) << "' failed: " << result << ".";

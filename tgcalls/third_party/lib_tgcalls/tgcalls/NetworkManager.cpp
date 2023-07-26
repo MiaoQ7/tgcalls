@@ -96,7 +96,7 @@ _localIceParameters(rtc::CreateRandomString(cricket::ICE_UFRAG_LENGTH), rtc::Cre
 
 NetworkManager::~NetworkManager() {
 	assert(_thread->IsCurrent());
-    printf("NetworkManager::~NetworkManager()\n");
+    
     RTC_LOG(LS_INFO) << "NetworkManager::~NetworkManager()";
 
 	_transportChannel.reset();
@@ -107,7 +107,7 @@ NetworkManager::~NetworkManager() {
 }
 
 void NetworkManager::start() {
-    _socketFactory.reset(new rtc::BasicPacketSocketFactory(_thread));
+    _socketFactory.reset(new rtc::BasicPacketSocketFactory(_thread->socketserver()));
 
     _networkManager = std::make_unique<rtc::BasicNetworkManager>(_networkMonitorFactory.get());
     
@@ -143,7 +143,6 @@ void NetworkManager::start() {
         proxyInfo.address = rtc::SocketAddress(_proxy->host, _proxy->port);
         proxyInfo.username = _proxy->login;
         proxyInfo.password = rtc::CryptString(TgCallsCryptStringImpl(_proxy->password));
-        printf("proxy: %s:%d  username: %s password: %s\n", _proxy->host.c_str(), _proxy->port, _proxy->login.c_str(), _proxy->password.c_str());
         _portAllocator->set_proxy("t/1.0", proxyInfo);
     }
     
@@ -220,26 +219,15 @@ void NetworkManager::receiveSignalingMessage(DecryptedMessage &&message) {
     }
 
 	for (const auto &candidate : list->candidates) {
-        // printf("candidate: %s\n", candidate.ToString().c_str());
 		_transportChannel->AddRemoteCandidate(candidate);
 	}
 }
 
 uint32_t NetworkManager::sendMessage(const Message &message) {
-    
 	if (const auto prepared = _transport.prepareForSending(message)) {
 		rtc::PacketOptions packetOptions;
-		auto sent = _transportChannel->SendPacket((const char *)prepared->bytes.data(), prepared->bytes.size(), packetOptions, 0);
+		_transportChannel->SendPacket((const char *)prepared->bytes.data(), prepared->bytes.size(), packetOptions, 0);
         addTrafficStats(prepared->bytes.size(), false);
-        if (sent >= 0) {
-            // if (const auto msg = absl::get_if<VideoDataMessage>(&message.data)) {
-            //     printf("send message: %d %d %d %d\n", prepared->bytes.data()[0], prepared->bytes.data()[1], prepared->bytes.data()[2], prepared->bytes.data()[3]);
-            // }
-            
-            // printf("send message: %s\n", _transportChannel->best_connection()->ToString().c_str());
-            // printf("send message: local %s\n", _transportChannel->best_connection()->local_candidate().ToString().c_str());
-            // printf("send message: remote %s\n", _transportChannel->best_connection()->remote_candidate().ToString().c_str());
-        }
 		return prepared->counter;
 	}
 	return 0;
