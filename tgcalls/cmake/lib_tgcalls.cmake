@@ -202,8 +202,8 @@ elseif (APPLE)
         WEBRTC_MAC
     )
     remove_target_sources(lib_tgcalls ${tgcalls_loc}
-        platform/darwin/DesktopCaptureSourceView.h
-        platform/darwin/DesktopCaptureSourceView.mm
+        platform/darwin/DesktopCaptureSourceViewMac.h
+        platform/darwin/DesktopCaptureSourceViewMac.mm
         platform/darwin/GLVideoView.h
         platform/darwin/GLVideoView.mm
         platform/darwin/GLVideoViewMac.h
