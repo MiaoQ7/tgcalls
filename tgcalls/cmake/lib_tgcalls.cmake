@@ -157,8 +157,8 @@ PRIVATE
     platform/tdesktop/VideoCameraCapturer.h
 
     # All
-    reference/InstanceImplReference.cpp
-    reference/InstanceImplReference.h
+    #reference/InstanceImplReference.cpp
+    #reference/InstanceImplReference.h
 
     # third-party
     third-party/json11.cpp
