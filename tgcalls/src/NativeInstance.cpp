@@ -35,6 +35,12 @@ NativeInstance::~NativeInstance() {
   if (_videoCapture) {
     _videoCapture.reset();
   }
+  if (_proxy) {
+    _proxy.reset();
+  }
+  if (instanceHolder) {
+    instanceHolder.reset();
+  }
 }
 
 void NativeInstance::setupGroupCall(

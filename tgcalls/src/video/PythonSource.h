@@ -13,7 +13,9 @@ class PythonSource {
 public:
   PythonSource(std::function<std::string()>, float, int, int, bool);
   PythonSource(std::function<std::string()>, float, int, int);
-  ~PythonSource() = default;
+  ~PythonSource() {
+    printf("PythonSource::~PythonSource()\n");
+  }
 
   virtual webrtc::VideoFrame next_frame();
 
