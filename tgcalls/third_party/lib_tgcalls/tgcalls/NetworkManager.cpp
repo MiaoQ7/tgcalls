@@ -96,7 +96,7 @@ _localIceParameters(rtc::CreateRandomString(cricket::ICE_UFRAG_LENGTH), rtc::Cre
 
 NetworkManager::~NetworkManager() {
 	assert(_thread->IsCurrent());
-    
+    printf("NetworkManager::~NetworkManager()\n");
     RTC_LOG(LS_INFO) << "NetworkManager::~NetworkManager()";
 
 	_transportChannel.reset();

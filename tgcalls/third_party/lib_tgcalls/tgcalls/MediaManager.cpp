@@ -450,6 +450,7 @@ void MediaManager::start() {
 MediaManager::~MediaManager() {
 	assert(_thread->IsCurrent());
 
+    printf("MediaManager::~MediaManager()\n");
     RTC_LOG(LS_INFO) << "MediaManager::~MediaManager()";
 
 	_call->SignalChannelNetworkState(webrtc::MediaType::AUDIO, webrtc::kNetworkDown);

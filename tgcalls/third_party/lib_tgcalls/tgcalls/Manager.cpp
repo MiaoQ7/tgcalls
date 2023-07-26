@@ -128,6 +128,7 @@ _dataSaving(descriptor.config.dataSaving) {
 }
 
 Manager::~Manager() {
+    printf("Manager::~Manager\n");
 	assert(_thread->IsCurrent());
 }
 
