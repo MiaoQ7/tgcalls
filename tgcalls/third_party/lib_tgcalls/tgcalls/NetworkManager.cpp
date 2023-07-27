@@ -126,6 +126,8 @@ void NetworkManager::start() {
     
     if (!_enableTCP) {
         flags |= cricket::PORTALLOCATOR_DISABLE_TCP;
+    } else {
+        flags |= cricket::PORTALLOCATOR_DISABLE_UDP_RELAY;
     }
     if (!_enableP2P) {
         flags |= cricket::PORTALLOCATOR_DISABLE_UDP;
