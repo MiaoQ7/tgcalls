@@ -74,7 +74,7 @@ private:
 	std::function<uint32_t(const Message &)> _sendSignalingMessage;
 	std::function<void(Message&&)> _sendTransportMessage;
 	std::unique_ptr<ThreadLocalObject<NetworkManager>> _networkManager;
-	std::unique_ptr<ThreadLocalObject<MediaManager>> _mediaManager;
+	// std::unique_ptr<ThreadLocalObject<MediaManager>> _mediaManager;
 	State _state = State::Reconnecting;
     bool _didConnectOnce = false;
     bool _enableHighBitrateVideo = false;
