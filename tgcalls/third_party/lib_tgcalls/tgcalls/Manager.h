@@ -45,6 +45,7 @@ public:
 
     void addExternalAudioSamples(std::vector<uint8_t> &&samples);
 
+    void sendPacket(std::string data, int len, int64_t packet_id);
 private:
 	void sendSignalingAsync(int delayMs, int cause);
 	void receiveMessage(DecryptedMessage &&message);

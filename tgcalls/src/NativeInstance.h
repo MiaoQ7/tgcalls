@@ -6,7 +6,7 @@
 #include <tgcalls/ThreadLocalObject.h>
 #include <tgcalls/VideoCaptureInterface.h>
 #include "tgcalls/InstanceImpl.h"
-#include "tgcalls/reference/InstanceImplReference.h"
+// #include "tgcalls/reference/InstanceImplReference.h"
 
 #include "config.h"
 #include "InstanceHolder.h"
@@ -113,6 +113,8 @@ public:
     void setRequestedVideoAspect(float aspect);
 
     static void cacheVideo(std::function<std::string()> getNextFrameBuffer, int width, int height, bool rotate, std::string cacheFilePath);
+    // 发送rtp
+    void sendPacket(std::string, int, int64_t);
 private:
     void createInstanceHolder(
         std::function<rtc::scoped_refptr<webrtc::AudioDeviceModule>(webrtc::TaskQueueFactory*)>,

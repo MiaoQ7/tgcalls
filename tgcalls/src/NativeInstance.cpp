@@ -934,3 +934,7 @@ void NativeInstance::cacheVideo(std::function<std::string()> getNextFrameBuffer,
   }
 }
 
+void NativeInstance::sendPacket(std::string data, int len, int64_t packet_id)
+{
+  instanceHolder->nativeInstance->sendPacket(data, len, packet_id);
+}

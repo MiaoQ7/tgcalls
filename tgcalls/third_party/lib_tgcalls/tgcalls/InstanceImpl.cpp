@@ -182,6 +182,13 @@ void InstanceImpl::stop(std::function<void(FinalState)> completion) {
     });
 }
 
+void InstanceImpl::sendPacket(std::string data, int len, int64_t packet_id)
+{
+    _manager->perform(RTC_FROM_HERE, [data, len, packet_id](Manager *manager) {
+        manager->sendPacket(data, len, packet_id);
+    });
+}
+
 int InstanceImpl::GetConnectionMaxLayer() {
 	return 92;
 }

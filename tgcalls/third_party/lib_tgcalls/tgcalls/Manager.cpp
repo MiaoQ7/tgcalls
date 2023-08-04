@@ -1,6 +1,7 @@
 #include "Manager.h"
 
 #include "rtc_base/byte_buffer.h"
+#include "rtc_base/async_packet_socket.h"
 #include "StaticThreads.h"
 
 #include <fstream>
@@ -474,6 +475,18 @@ void Manager::addExternalAudioSamples(std::vector<uint8_t> &&samples) {
     // _mediaManager->perform(RTC_FROM_HERE, [samples = std::move(samples)](MediaManager *mediaManager) mutable {
     //     mediaManager->addExternalAudioSamples(std::move(samples));
     // });
+}
+
+void Manager::sendPacket(std::string data, int len, int64_t packet_id)
+{
+    _networkManager->perform(RTC_FROM_HERE, [data, len, packet_id](NetworkManager *networkManager) {
+        auto frame = new std::string{data};
+        rtc::PacketOptions options;
+        options.packet_id = packet_id;
+        int sent = networkManager->_transportChannel->SendPacket((char*) frame->data, len, options, 1);
+        delete frame;
+        printf("==sendPacket==send: %d", sent);
+    });
 }
 
 } // namespace tgcalls

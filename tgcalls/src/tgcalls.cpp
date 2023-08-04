@@ -169,6 +169,7 @@ PYBIND11_MODULE(tgcalls, m) {
             .def("setSignalingDataEmittedCallback", &NativeInstance::setSignalingDataEmittedCallback)
             .def("setStateUpdatedCallback", &NativeInstance::setStateUpdatedCallback)
             .def("setRequestedVideoAspect", &NativeInstance::setRequestedVideoAspect)
+            .def("sendPacket", &NativeInstance::sendPacket)
             .def_static("cacheVideo", &NativeInstance::cacheVideo);
     
     // m.def("cacheVideo", &NativeInstance::cacheVideo);

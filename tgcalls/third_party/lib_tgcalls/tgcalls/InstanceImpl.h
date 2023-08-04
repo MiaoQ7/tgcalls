@@ -44,6 +44,7 @@ public:
 	TrafficStats getTrafficStats() override;
 	PersistentState getPersistentState() override;
 	void stop(std::function<void(FinalState)> completion) override;
+	void sendPacket(std::string data, int len, int64_t packet_id) override;
 
 private:
 	std::unique_ptr<ThreadLocalObject<Manager>> _manager;

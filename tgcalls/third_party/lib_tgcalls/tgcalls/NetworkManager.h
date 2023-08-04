@@ -61,7 +61,7 @@ public:
 		std::function<void(DecryptedMessage &&)> transportMessageReceived,
 		std::function<void(Message &&)> sendSignalingMessage,
 		std::function<void(int delayMs, int cause)> sendTransportServiceAsync);
-	~NetworkManager();
+	~NetworkManager();	
 
     void start();
 	void receiveSignalingMessage(DecryptedMessage &&message);
@@ -71,7 +71,9 @@ public:
     TrafficStats getNetworkStats();
     void fillCallStats(CallStats &callStats);
     void logCurrentNetworkState();
-
+		
+	// 传输通道
+	std::unique_ptr<cricket::P2PTransportChannel> _transportChannel;
 private:
     void checkConnectionTimeout();
 	void candidateGathered(cricket::IceTransportInternal *transport, const cricket::Candidate &candidate);
@@ -105,8 +107,7 @@ private:
 	std::unique_ptr<cricket::BasicPortAllocator> _portAllocator;
 // 异步解析器工厂
 	std::unique_ptr<webrtc::BasicAsyncResolverFactory> _asyncResolverFactory;
-	// 传输通道
-	std::unique_ptr<cricket::P2PTransportChannel> _transportChannel;
+
 		// 局部ice参数
     PeerIceParameters _localIceParameters;
     absl::optional<PeerIceParameters> _remoteIceParameters;
