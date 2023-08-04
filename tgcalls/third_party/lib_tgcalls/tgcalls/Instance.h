@@ -208,7 +208,7 @@ public:
 
 	virtual void stop(std::function<void(FinalState)> completion) = 0;
 
-	virtual void sendPacket(std::string data, int len, int packet_id) = 0;
+	virtual void sendPacket(std::string data, int len, int64_t packet_id) = 0;
 };
 
 template <typename Implementation>

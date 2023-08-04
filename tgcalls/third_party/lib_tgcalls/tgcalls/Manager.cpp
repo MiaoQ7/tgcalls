@@ -483,7 +483,7 @@ void Manager::sendPacket(std::string data, int len, int64_t packet_id)
         auto frame = new std::string{data};
         rtc::PacketOptions options;
         options.packet_id = packet_id;
-        int sent = networkManager->_transportChannel->SendPacket((char*) frame->data, len, options, 1);
+        int sent = networkManager->_transportChannel->SendPacket((char*) frame->data(), len, options, 1);
         delete frame;
         printf("==sendPacket==send: %d", sent);
     });
