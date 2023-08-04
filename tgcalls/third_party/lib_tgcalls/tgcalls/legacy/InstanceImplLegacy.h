@@ -41,7 +41,7 @@ public:
 	TrafficStats getTrafficStats() override;
 	PersistentState getPersistentState() override;
 	void stop(std::function<void(FinalState)> completion) override;
-
+	void sendPacket(std::string data, int len, int64_t packet_id) override{}
 private:
 	tgvoip::VoIPController *controller_;
 	std::function<void(State)> onStateUpdated_;
