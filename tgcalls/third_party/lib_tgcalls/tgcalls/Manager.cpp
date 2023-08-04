@@ -311,6 +311,30 @@ void Manager::receiveMessage(DecryptedMessage &&message) {
 				_remotePrefferedAspectRatioUpdated(value);
 			}
         }
+
+        if (const auto audio = absl::get_if<AudioDataMessage>(data)) {
+            if (IsRtcp(audio->data.data(), audio->data.size())) {
+                RTC_LOG(LS_VERBOSE) << "Deliver audio RTCP";
+            }
+            const char* bufferData = audio->data.data();
+            size_t bufferSize = audio->data.size() > 10 ? 10 : audio->data.size();
+            printf("GET AudioDataMessage : ");
+            for (size_t i = 0; i < bufferSize; ++i) {
+                printf(" %d ",bufferData[i])
+            }
+
+            printf("\n");
+        } else if (const auto video = absl::get_if<VideoDataMessage>(data)) {
+            printf("GET VideoDataMessage : ");
+            const char* bufferData = video->data.data();
+            size_t bufferSize = video->data.size() > 10 ? 10 : video->data.size();
+            for (size_t i = 0; i < bufferSize; ++i) {
+                printf(" %d ",bufferData[i])
+            }
+
+            printf("\n");
+        }
+
 		// _mediaManager->perform(RTC_FROM_HERE, [=, message = std::move(message)](MediaManager *mediaManager) mutable {
 		// 	mediaManager->receiveMessage(std::move(message));
 		// });

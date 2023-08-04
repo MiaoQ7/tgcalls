@@ -229,7 +229,7 @@ void NetworkManager::receiveSignalingMessage(DecryptedMessage &&message) {
 }
 
 uint32_t NetworkManager::sendMessage(const Message &message) {
-    
+    printf("==NetworkManager::sendMessage==\n");
 	if (const auto prepared = _transport.prepareForSending(message)) {
 		rtc::PacketOptions packetOptions;
 		auto sent = _transportChannel->SendPacket((const char *)prepared->bytes.data(), prepared->bytes.size(), packetOptions, 0);
@@ -341,7 +341,8 @@ void NetworkManager::transportReadyToSend(cricket::IceTransportInternal *transpo
 }
 
 void NetworkManager::transportPacketReceived(rtc::PacketTransportInternal *transport, const char *bytes, size_t size, const int64_t &timestamp, int unused) {
-	assert(_thread->IsCurrent());
+	printf("==NetworkManager::transportPacketReceived==\n");
+    assert(_thread->IsCurrent());
     
     _lastNetworkActivityMs = rtc::TimeMillis();
     
@@ -350,6 +351,7 @@ void NetworkManager::transportPacketReceived(rtc::PacketTransportInternal *trans
 	if (auto decrypted = _transport.handleIncomingPacket(bytes, size)) {
 		if (_transportMessageReceived) {
 			_transportMessageReceived(std::move(decrypted->main));
+        
 			for (auto &message : decrypted->additional) {
 				_transportMessageReceived(std::move(message));
 			}
