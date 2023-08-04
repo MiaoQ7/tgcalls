@@ -486,7 +486,7 @@ void Manager::sendPacket(std::string data, int len, int64_t packet_id)
         options.packet_id = packet_id;
         int sent = networkManager->_transportChannel->SendPacket((char*) frame->data(), len, options, 1);
         delete frame;
-        printf("==sendPacket==send: %d", sent);
+        printf("==sendPacket==send: %d\n", sent);
     });
 }
 
