@@ -2,6 +2,7 @@
 
 #include "rtc_base/byte_buffer.h"
 #include "rtc_base/async_packet_socket.h"
+#include "p2p/base/p2p_transport_channel.h"
 #include "StaticThreads.h"
 
 #include <fstream>
