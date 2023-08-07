@@ -278,6 +278,11 @@ void Manager::receiveSignalingData(const std::vector<uint8_t> &data) {
 	}
 }
 
+static bool IsRtcp(const uint8_t* packet, size_t length) {
+    webrtc::RtpUtility::RtpHeaderParser rtp_parser(packet, length);
+    return rtp_parser.RTCP();
+}
+
 void Manager::receiveMessage(DecryptedMessage &&message) {
 	const auto data = &message.message.data;
 	if (const auto candidatesList = absl::get_if<CandidatesListMessage>(data)) {
@@ -340,11 +345,6 @@ void Manager::receiveMessage(DecryptedMessage &&message) {
 		// 	mediaManager->receiveMessage(std::move(message));
 		// });
 	}
-}
-
-static bool IsRtcp(const uint8_t* packet, size_t length) {
-    webrtc::RtpUtility::RtpHeaderParser rtp_parser(packet, length);
-    return rtp_parser.RTCP();
 }
 
 void Manager::setVideoCapture(std::shared_ptr<VideoCaptureInterface> videoCapture) {
