@@ -341,6 +341,11 @@ void Manager::receiveMessage(DecryptedMessage &&message) {
 	}
 }
 
+static bool IsRtcp(const uint8_t* packet, size_t length) {
+    webrtc::RtpUtility::RtpHeaderParser rtp_parser(packet, length);
+    return rtp_parser.RTCP();
+}
+
 void Manager::setVideoCapture(std::shared_ptr<VideoCaptureInterface> videoCapture) {
 	assert(_didConnectOnce);
 
